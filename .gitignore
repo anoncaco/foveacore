@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environment
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# IDE and temporary files
+.vscode/
+.idea/
+tmp_ai/
+*.log
+*.tmp
+*.bak
+
+# Research artifacts (raw data excluded; manifests & checksums tracked)
+/data/
+!/data/
+/data/*
+!/data/split_*.json
+!/data/ground_truth_vault.json
+/data/split_manifest_v1.json
+!/data/freeze_manifest.json
+!/data/*.sha256
+!/data/manifests/
+!/data/manifests/**
+/datasets/
+/checkpoints/
+/weights/
+/outputs/
+/runs/
+/artifacts/
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.gguf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OpenCode agent files (not project source)
+.opencode/
+AGENTS.md
+opencode.jsonc
