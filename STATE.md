@@ -12,11 +12,61 @@
 
 - `git_dirty` = `git status --porcelain` 기준 `src/`, `configs/`, `locks/`, `pyproject.toml` 내 수정·미추적(untracked) 파일 존재 시 True.
 
+## Git 운영 규칙
+
+### 브랜치 흐름 (단방향)
+
+```
+dev (구현) → verify (검증/수정) → main (최종 통합)
+```
+
+- `dev`: T0~T4 등 단계별 기능 개발 브랜치
+- `verify`: `dev`에서 분기하여 검증 및 수정 수행
+- `main`: 검증 통과 후 최종 통합만 수행 (보호 브랜치)
+
+### 커밋 규칙
+
+- 한 단계(T0, T1, T2, T3...) = 최소 1커밋
+- 여러 태스크를 한 커밋에 스쿼시하지 않음
+- 기준 커밋 해시는 "해당 코드가 확정된 직전 커밋 해시"를 기록 (커밋 직후 해시가 아님)
+
+### 변경 영수증 양식 (각 Task 완료 시 STATE.md에 기록)
+
+```
+### T{n} 완료 노트 (`<직전 커밋 해시>`)
+
+기준 커밋: `git rev-parse --short HEAD` (직전 커밋)
+
+생성/수정 파일 (`git show --stat <커밋>` 결과):
+- `<파일 경로 1>`
+- `<파일 경로 2>`
+
+요구사항 구현 방식 구분:
+- [코드·테스트 반영] — 실제 .py 및 tests/에 구현된 항목
+- [수동 기록 / 후속 이관] — 아직 코드에 연결 안 되고 텍스트만 적은 항목
+
+검증 명령 & 실제 결과:
+- `<명령>` → `<결과>`
+```
+
+
 ## T0 완료 노트
 
-- Git baseline commit `b699237`(13 files), 후 `chore(phase0): restore repo, lock gpu env & base CLI`(99b6342).
+- 기준 커밋: `45e1eee` (현재 HEAD, T0~T3 포함)
+- 관련 커밋: `05b9c2b` (feat(phase0): complete phase 0 (T0-T3) all hardening)
 - `pip install -e .` 완료, `import foveacore` 검증(0.1.0, `src/foveacore/__init__.py`).
 - `locks/phase0_requirements.lock`(39 lines), `dependency_lock_hash` = `7afc502593648a28ef09c8bd964340ae75d1d41e1ac0e5e3d3b2485cce877ce1` (editable 경로 상대화 후 재산출).
+
+### T0 산출물 파일 목록
+
+| # | 파일 | T0 역할 | 검증 방법 |
+|---|------|---------|-----------|
+| 1 | `pyproject.toml` | 서브패키지 자동 탐색, 버전 `0.1.0` | `[tool.setuptools.packages.find] where=["src"]` |
+| 2 | `locks/phase0_requirements.lock` | 의존성 잠금 (39줄, `-e .` 상대 경로) | `sha256sum` 일치 |
+| 3 | `.gitignore` | Python/캐시/환경 제외, 데이터 예외 | `git check-ignore` |
+| 4 | `README.md` | 연구 계획서 `v1.9.3` 표기 | `v1.9.3` 표기 존재 |
+| 5 | `STATE.md` | 단계·버전·완료 노트 | 파일 존재, Git 추적 중 |
+
 
 ## T1 완료 노트 (`6cd9193`)
 
