@@ -11,48 +11,6 @@
 
 ---
 
-## 목차
-
-| 번호 | 제목 | 줄번호 |
-|---|---|---:|
-| 1 | # FoveaCore 연구·구현 계획서 v1.9.3 (GPU 기준 개정본) | L1 |
-| 2 | ## 한눈에 보는 핵심 용어 사전 (직관 설명) | L56 |
-| 3 | ## 문서 사용법 및 구축 순서 | L73 |
-| 4 | ## 가설 검증 경로 | L99 |
-| 5 | # 제I편. 기본 프로젝트 — 독립 시각 인지 엔진 | L131 |
-| 6 | ## 연구 목적과 전체 작동 원리 | L133 |
-| 7 | ## Phase 0 — 실험 환경, 데이터 격리 및 초경량 기준 | L207 |
-| 8 | ## Phase 1 — 중심와 센서와 기하학적 사전 학습 | L263 |
-| 9 | ## Phase 2 — 시선 이동과 순차 관측 통합 | L320 |
-| 10 | ## Phase 3 — 구조 추상화 및 1-Shot 기억 (DAS) | L358 |
-| 11 | ## Phase 4 — 조건부 World Model과 가설 기반 역추론 | L406 |
-| 12 | ## Phase 5 — 내부 Replay, 시각 지속 학습 및 가설 격리 검증 | L471 |
-| 13 | ## Phase 6 — 통합 모델 실험과 공식 검증 | L586 |
-| 14 | ## Phase 7 — 실전 강건성·이동·부분 가림·전이 검증 및 인도 | L660 |
-| 15 | # 제II편. 확장 프로젝트 — 이미지·텍스트·LLM | L693 |
-| 16 | ## Phase 8 — 텍스트 감각 어댑터 | L726 |
-| 17 | ## Phase 9 — 공통 의미 공간 및 개념 기억 | L736 |
-| 18 | ## Phase 10 — 교차 감각 1-Shot 학습과 Replay (H7~H9 공식 검증) | L746 |
-| 19 | ## Phase 11 — 능동 멀티모달 추론과 LLM 인터페이스 A안 | L755 |
-| 20 | ## Phase 12 — 대화형 교정과 신규 개념 지속 학습 (H11~H15) | L780 |
-| 21 | ## Phase 13 — 선택 연구: 비자기회귀 언어 출력기 B안 (H16~H18) | L792 |
-| 22 | # 제III편. 공통 개발·실험·인도 계약 | L802 |
-| 23 | ## A. 프로젝트 구조 | L804 |
-| 24 | ## B. 실행 명령, 단계 진입 및 실패 처리 | L828 |
-| 25 | # 확장 전용 CLI (Phase 10~13) | L840 |
-| 26 | ## C. 개발 일정 및 2단계 우선순위 전략 | L848 |
-| 27 | ## D. 관련 선행 연구 | L856 |
-| 28 | # 제IV편. 기술 부록 — 상세 인터페이스·데이터·시각화·검증 계약 | L866 |
-| 29 | ## 부록 1. 공통 인터페이스별 필드 정의 (Phase 0~13) | L870 |
-| 30 | ## 부록 2. JSON 입출력 계약, `SemanticPacket` 및 `quarantine.json` | L881 |
-| 31 | ## 부록 3. `TEACH / CORRECT` 요청 검증, 중복 방지 및 5단계 가설 격리 (Phase 11~12) | L950 |
-| 32 | ## 부록 4. `manifest.json` 및 `freeze_manifest.json` 필수 필드 | L958 |
-| 33 | ## 부록 5. 추론·학습 `trace` 및 저장 규격 | L968 |
-| 34 | ## 부록 6. `V01~V16` 시각화 상세 명세 및 대시보드 모드 | L975 |
-| 35 | ## 부록 7. 텍스트·이미지 개념 정렬의 데이터 통제 (Phase 9~10) | L998 |
-| 36 | ## 부록 8. 비자기회귀 언어 출력기(NAT B안) 세부 아키텍처 (Phase 13) | L1005 |
-| 37 | ## 부록 9. 단계별 필수 테스트 및 산출물 계약 | L1012 |
-
 ## 한눈에 보는 핵심 용어 사전 (직관 설명)
 
 | 용어 | 쉽게 풀면 무슨 뜻인가? | 구체적 예시 |
@@ -244,7 +202,15 @@ flowchart TD
 - **지속 학습 분할:** `MNIST train` 내부에서 `[초기 support 10장]`, `[개발 스트림]`, `[본 실험 학습 스트림]` ID를 완전 격리합니다.
 - **OOD 분할:** 미학습 문자·기호·형태 유사 hard negative·난수(보정용 dev OOD와 평가용 test OOD 분리).
 
-#### 4. 공통 인터페이스 및 실행 모드 경계
+#### 4. 공통 이미지 입력·전처리 계약 (Phase 1 센서 구현에 앞선 규격 확정)
+
+- **임의 해상도:** 센서 입력은 고정 `28×28`이 아닌 2D 흑백 이미지 `(H,W)`(`H,W ≥ 1`)를 수용합니다. 고정되는 것은 센서가 반환하는 관측 격자(`5×5×4`, 후속 고해상도 별도 프로파일 `97×97×4`)이며, 원본 이미지 전체를 인지 코어나 비교군에 직접 제공한다는 뜻이 아닙니다. MNIST `28×28`과 Phase 7 `56×56` 공식 평가 입력은 그대로 유지합니다.
+- **긴 변 상한·종횡비 유지:** `L=max(H,W)`, `max_side=1024`. `L≤1024`이면 업스케일·강제 정사각 리사이즈 없이 원본 크기 그대로 사용합니다. `L>1024`이면 `scale=1024/L`, `(H',W')=(max(1,round(H·scale)), max(1,round(W·scale)))`로 **축소만** 수행합니다. `AdaptiveAvgPool2d((H',W'))` 등 면적 기반 평균 축소를 사용하고, 반올림으로 발생하는 경미한 비율 오차를 기록합니다. 예: `4096×3072→1024×768`, `3072×4096→768×1024`, `1920×1080→1024×576`.
+- **좌표계:** 시선 중심 `(x,y)`는 전처리 후 `(H',W')`의 픽셀 중심 기준 `[0,1]` 좌표로 관리합니다(각 축 길이가 1이면 중앙 `0.5`). 레거시 `[-1,1]` 및 픽셀 좌표는 동일한 점으로 변환해 함께 기록합니다. 예컨대 `grid_sample(align_corners=False)`용 좌표는 `x_grid=2(x_px+0.5)/W'−1`, `y_grid=2(y_px+0.5)/H'−1`이며 짝수 크기 중심 반픽셀 정책을 유지합니다.
+- **프로파일/감사:** `original_hw`, `processed_hw`, `max_side`, `resize_method`, `preprocess_profile_id`, 좌표·정밀도·시드 및 원본/처리 이미지 해시를 기록합니다. 축소 전 원본은 센서 이외의 추론 구성 요소가 참조하지 않습니다. 기존 `B0/B1`의 MNIST 28×28 전처리·정확도 계약은 변경하지 않습니다.
+- **구현 경계:** Phase 0에서는 설정 스키마·공통 계약·테스트 fixture만 준비하며, 실제 F1~F4 패치 추출·풀링 본체는 Phase 1에서 구현합니다.
+
+#### 5. 공통 인터페이스 및 실행 모드 경계
 
 `Observation`, `Action`, `Structure`, `Hypothesis`, `Prediction`, `Memory` 계약의 상세 필드는 **제IV편 부록 1**에 정의하며, Phase 0에서는 직렬화·스키마 호환성만 구현합니다(텍스트·LLM 미설치). `INFER`(읽기 전용), `ADAPT`(승인 지원·스트림 적응 전용), `EVALUATE`(점수 계산 전용) 경계를 강제합니다.
 
@@ -268,31 +234,34 @@ flowchart TD
 
 #### 1. 입력 좌표와 원본 접근 규칙
 
-- 기본 `28×28` 흑백(`[0, 1]`), 이동 확장 `56×56` 무작위 배치(고정 seed).
-- 이미지 중심 원점 정규화 좌표 `[-1, 1]` 및 픽셀 좌표 동시 기록, 짝수 중심 반픽셀 보간 및 zero-padding 유효 마스크 제공.
-- **원칙:** 추론 중 **오직 센서만** 원본 이미지 픽셀을 조회합니다.
+- **기본 실험은 변경하지 않음:** MNIST `28×28` 흑백(`[0,1]`) 및 Phase 7의 `56×56` 이동 확장(고정 seed)을 그대로 공식 비교에 사용합니다. 센서 API 자체는 Phase 0의 **임의 `(H,W)` / `max_side=1024`** 전처리 계약을 수용하며, `L≤1024`이면 강제 리사이즈·업스케일하지 않습니다.
+- 시선은 전처리 후 캔버스의 정규화 `[0,1]` 좌표를 기본으로 하고, 기존 이미지 중심 `[-1,1]` 및 픽셀 좌표도 함께 기록합니다. `grid_sample(align_corners=False)` 변환·짝수 중심 반픽셀 보간·zero-padding 마스크는 공통 전처리 계약과 일치해야 합니다.
+- **원칙:** 추론 중 **오직 센서만** 원본/전처리 이미지 픽셀을 조회합니다. 리사이즈와 패치 추출에서 실제 접근한 원본 픽셀 면적·비용을 구분하여 기록합니다.
 
 #### 2. 다중 해상도 센서 (F1~F4)
 
 ```mermaid
 flowchart TD
-    I["원본 28×28 또는 56×56"] --> P["선택 좌표 + 유효 마스크"]
-    P --> F["5×5 중심와 (고해상도)"]
-    P --> M["11×11 중간 주변부"]
-    P --> O["19×19 외곽 주변부"]
-    M --> M2["5×5 pooling"]
-    O --> O2["5×5 pooling · F4: 3×3"]
-    F --> K["관측 텐서 + 위치 + 비용"]
-    M2 --> K
-    O2 --> K
+    I["입력 (H,W) · 긴 변 >1024만 비율 유지 축소"] --> P["시선 좌표 [0,1] · 채널별 유효영역"]
+    P --> F["중심와 5×5 원본 픽셀"]
+    P --> M["11×11 → Adaptive MaxPool 5×5"]
+    P --> O["19×19 → Masked Adaptive AvgPool 5×5"]
+    F --> K["F3 5×5×4: 중심/중간/외곽/유효비율 마스크"]
+    M --> K
+    O --> K
 ```
 
 | 센서군 | 중심와 (원본 해상도) | 중간 주변부 (축소) | 외곽 주변부 (축소) |
 |---|---|---|---|
 | **F1** | 5×5 | 없음 | 없음 |
-| **F2** | 5×5 | 11×11 → 5×5 | 없음 |
-| **F3 (기본)** | 5×5 | 11×11 → 5×5 | 19×19 → 5×5 |
-| **F4** | 5×5 | 11×11 → 5×5 | 19×19 → 3×3 |
+| **F2** | 5×5 | 11×11 → 5×5 **최대 풀링** | 없음 |
+| **F3 (기본)** | 5×5 | 11×11 → 5×5 **최대 풀링** | 19×19 → 5×5 **유효 픽셀 평균 풀링** |
+| **F4** | 5×5 | 11×11 → 5×5 **최대 풀링** | 19×19 → 3×3 **유효 픽셀 평균 풀링** |
+
+- **기본 F3 입력 텐서:** `[중심와 원본, 중간 MaxPool, 외곽 Masked AvgPool, 유효비율 마스크]`의 개념적 형상은 `5×5×4`(픽셀 100개 스칼라), PyTorch 실제 형상은 `[B,4,5,5]`입니다. 첫 3채널은 intensity `[0,1]`, 마지막 채널은 유효 범위 비율 `[0,1]`이며 `0`은 해당 격자의 전부가 이미지 밖, `1`은 전부 이미지 안입니다.
+- **경계·풀링:** 이미지 밖은 `0`으로 패딩하되 평균 풀링의 **분모에서는 제외**합니다. `torch.nn.functional.adaptive_avg_pool2d`는 `count_include_pad` 인자를 제공하지 않으므로 `masked_sum / valid_count`에 해당하는 **마스크 기반 Adaptive Average Pooling**을 구현합니다(빈 bin은 출력 `0`). 고정 `avg_pool2d`를 쓸 때만 `count_include_pad=False`를 적용합니다. 주변부별 유효비율을 별도로 계산하고, F3의 출력 마스크 채널은 **외곽 `19×19`의 5×5 bin 유효비율**을 사용합니다. 세 채널 각각의 원래 유효 마스크는 메타데이터로 보존합니다.
+- **F1/F2/F4 출력 비교 계약:** 누락된 강도 채널은 `0`으로 두고 센서 ID 및 관측가능 범위 메타데이터를 기록합니다. F1/F2의 유효비율 마스크는 해당 센서의 **가장 바깥쪽 활성 창**을 기준으로 계산합니다. F4의 3×3 외곽 출력은 정보가 늘어나지 않는 **최근접 보간**으로 5×5 격자에 정렬해 공통 `[B,4,5,5]` 입력을 유지하되, 원래 3×3 해상도 및 관측 비용을 별도 기록합니다.
+- **확장 가능한 격자:** 격자 한 변을 설정값 `grid_size=5`로 정의하고, 후속 `grid_size=97`에도 동일 채널 순서·유효성·풀링 의미론을 유지합니다. 센서 프로파일 및 격자·원본 창 크기 변경은 **새 모델/체크포인트 프로파일**로 구분하며 공식 비교군의 센서 크기를 사후 변경하지 않습니다.
 
 - **관측 범위와 실제 획 관측률 구분 (중요):** `19×19`는 `28×28` 전체 면적의 최대 **46.0%**를 포함하며(중앙 `20×20` 바운딩박스 기준으로는 약 90% 창 면적 비율에 해당), 이는 **외곽 시야 창의 기하학적 면적 비율일 뿐 실제 숫자 획(foreground stroke)을 90% 정확히 관측했다는 의미로 단정하지 않습니다.** 실제 숫자 획의 분포는 불균일하고 `19×19 → 5×5` 평균 pooling 시 고주파 획 정보가 희석되기 때문입니다. 따라서 모든 실험에서 아래 3가지 관측 면적 지표를 **반드시 분리 측정**합니다.
   1. **전체 이미지 면적 관측률:** 전체 캔버스 대비 누적 시야 합집합 비율
@@ -308,7 +277,7 @@ flowchart TD
 ### 가설 및 검증 방법
 
 - A1/A9 및 F3-21 감도 비교로 센서별 관측 면적(전체/획/고해상도)과 기초 특징 예측 비용을 점검합니다.
-- **단위 테스트:** 좌표·반픽셀 정합성, padding/mask pooling, 3종 면적 산정, 미관측 픽셀 접근 차단.
+- **단위 테스트:** 임의 `(H,W)`(가로/세로/단일축 포함)·`max_side` 전후 크기/종횡비/좌표 역변환, `5×5×4` 채널 순서·값 범위, 중간 MaxPool/외곽 Masked AvgPool·빈 bin·유효비율 마스크, F4 3×3 정렬, 반픽셀 정합성, 3종 면적 산정, 미관측 픽셀 접근 차단.
 
 ### 산출물 및 진입 조건
 
@@ -336,7 +305,7 @@ flowchart TD
 
 #### 2. Temporal Aggregator (2층 GRU) 및 사전 학습 명세
 
-- **구조:** `2층 GRU (hidden=128)` (Causal Transformer는 Stage 2 대안). 입력: 패치 임베딩 $e_t$, 절대 좌표 $p_t$, 변위 $\Delta p_t$, 유효 마스크.
+- **구조:** `2층 GRU (hidden=128)` (Causal Transformer는 Stage 2 대안). 입력: **4채널 센서 관측**(`[B,4,5,5]` → 입력 투영 → 패치 임베딩 $e_t$), 절대 좌표 $p_t$, 변위 $\Delta p_t$, 유효 마스크. F1~F4 비교에서도 투영 계층의 입력 계약은 동일하게 유지합니다. `2px/6px` 보폭은 레거시 `28×28` 기준이며, 고해상도 신규 프로파일에서는 처리 캔버스와 창 크기에 맞는 별도 보폭/관측 예산을 설정·검증합니다.
 - **GRU 사전 학습 데이터·목적함수·종료 조건:**
   - **사전 학습 데이터:** Phase 1 합성 선·곡선·그래프 이미지에서 Fixed/Random/Active-coverage 경로로 추출한 순차 관측 시퀀스(스텝 $1\sim 10$).
   - **목적함수:** 매 스텝 은닉 상태 $h_t$로부터 (1) 현재까지 관측된 기하 속성 예측 손실 $L_{\text{geom}}(h_t)$와 (2) 다음 관측 기초 특징 예측 손실 $L_{\text{feat}}(h_t, a_{t+1})$의 가중 합을 최소화(Phase 3 구조·스타일 분리나 Phase 4 조건부 `W`에 선행 의존하지 않음).
@@ -363,6 +332,7 @@ flowchart TD
 
 #### 1. 구조·스타일 분리 표현
 
+- **센서 채널 계약 상속:** Phase 2가 생성한 **4채널 관측(마스크 포함)**을 동일한 입력 투영기로 받아 구조/스타일을 분리합니다. 마스크를 원본 획 특징처럼 해석하지 않도록 입력 채널·프로파일 버전을 고정합니다. `97×97×4`는 Phase 7 이후 별도 확장 실험이며 이 단계의 기존 5×5 체크포인트와 혼용하지 않습니다.
 - **잠재 벡터:** 구조 `z_struct`(64차원) + 스타일 `z_style`(16차원).
 - **해석 가능한 구조 head $g$:** 방향 히스토그램, 곡률, 끝점, 분기·교차, 폐곡선, 상대 위치 및 **관측 가능성 마스크 $m$** 반환.
 - **클래스 내 비아핀 변형 고려:** 닫힌 `4` vs 열린 `4`, 가로획 유무 `7` 등 위상 변형을 고려해 Phase 3(1-shot)은 비숫자 손글씨 dev 분할로 허용치(`r_c`, `Σ0`)를 보정하며, 복수 하위 프로토타입 분기는 Phase 5 선택 실험으로 분리합니다.
@@ -408,6 +378,8 @@ DAS_c = { prototype μ_c, geometry g_c, observed_mask m_c,
 > 💡 **쉽게 말하면:** **Phase 3 인코더를 동결한 채 조건부 예측기(`W`)만 학습**하고, 실제 10장 `DAS`를 읽기 전용으로 조회하며 **분산 클램핑·`logsumexp`·엔트로피·0 나눗셈 방지 등 수치 안정화 장치**를 갖춘 역추론과 EIG로 가설을 검증하는 단계입니다. (목표 2주)
 
 ### 구현 명세
+
+**센서 입력 호환 규칙:** `W`·`target encoder Q`가 받는 관측 특징은 Phase 1~3의 **4채널 센서(마스크 포함)**를 통과한 인코딩으로 한정합니다. 기존 F3 `5×5×4` 프로파일에서 학습한 체크포인트에 확장 `97×97×4` 관측을 직접 주입하지 않습니다. 풀링/마스크 변경 시 `sensor_profile`, 비용·예측·재현성을 별도 버전으로 검증합니다.
 
 #### 1. 인코더 동결 원칙 및 확률적 World Model (`W`)
 
@@ -473,6 +445,8 @@ L_pred = mean[0.5 * ((e_next - μ_pred)^2 / σ²_pred + log(σ²_pred))]
 > 💡 **쉽게 말하면:** `R1`과 `R4`를 선택 정책 외 변수 통제하에 공정 비교하고 `S0~S5` 전 비교군으로 지속 학습을 검증하며, **수치 오류 발생 시 즉시 학습을 중단해 기존 기억을 보존하고, 모순된 교정(`1→9`)이 들어오면 `주장 저장 · 기존 기억 유지 · 충돌 기록 → 샌드박스 내부 Replay 검토 → 이후 독립 경험 심판` 루프로 방어**하는 단계입니다. (목표 3주)
 
 ### 구현 명세
+
+**센서 입력 호환 규칙:** Replay와 원본 관측은 **동일한 4채널 센서 프로파일(중심/중간/외곽/유효비율 마스크)**로 인코딩합니다. 가상 관측이 원본 이미지 전체나 유효 영역 마스크를 우회 조회하지 않도록 하며, 마스크·채널 수와 관측 비용도 trace에 포함합니다.
 
 #### 1. 4종 반례 유형 엄격 분리
 
@@ -589,6 +563,8 @@ flowchart TD
 
 ### 구현 명세
 
+**센서 프로파일 동결:** 본 실험 모델과 비교군은 Phase 1에서 확정한 **4채널 입력 계약 및 F1~F4 프로파일**을 따릅니다. `grid_size=5`, 주변 창/풀링/마스크 의미론, 처리 캔버스·좌표계, 센서 FLOPs를 `freeze_manifest.json`에 함께 동결합니다. `97×97×4` 확장 모델의 결과는 Phase 7 이후 별도 비교군으로만 취급합니다.
+
 #### 1. Phase 6·7 통합 사전 동결 (`Unified Confirmatory Freeze`)
 
 Phase 5 완료 후 공식 평가 데이터에 접근하기 직전, **Phase 6과 Phase 7 전체를 하나의 동결 manifest(`freeze_manifest.json`)로 일괄 서명·동결**합니다.
@@ -662,6 +638,8 @@ Phase 5 완료 후 공식 평가 데이터에 접근하기 직전, **Phase 6과 
 > 💡 **쉽게 말하면:** Phase 6과 함께 사전 동결된 설정을 그대로 사용해 **`56×56` 위치 이동, 획 기준 부분 가림, 분리된 신규 문자 전이, GPU 연산 효율**을 검증하고 독립 엔진을 인도하는 단계입니다. (목표 2주)
 
 ### 구현 명세 및 확정 검증 매트릭스
+
+- **고해상도 확장 게이트(Phase 7 이후, 기본 공식 검증과 분리):** Phase 6·7 통합 동결과 `28×28/56×56` 검증을 마친 후에만 별도 모델 프로파일로 입력 전처리 `max_side=1024`와 **`97×97×4` 센서**를 적용합니다. 이때 창은 **중심와 `97×97` 원본**, **중간 `257×257 → 97×97` Adaptive MaxPool**, **외곽 `513×513 → 97×97` Masked Adaptive AvgPool**, **마스크 `97×97`**(외곽 유효비율)로 고정합니다. PyTorch 입력은 `[B,4,97,97]`이며 `(97×97×4)=37,636` 스칼라입니다. 이 확장은 새로운 투영층·시선 보폭·학습/평가 체크포인트·GPU 비용을 필요로 하고 **Phase 6·7의 기존 H1~H6 결과를 소급 대체하지 않습니다.**
 
 1. **부분 가림 단일 기준 확정:** 가림 비율은 **유효 숫자 바운딩박스 내부 실제 획(foreground stroke) 픽셀 면적 기준(`10%`, `20%`, `30%`)** 하나로 통일합니다(전체 캔버스 대비 비율은 보조 수치로만 병기).
 2. **가림 조건 명세:**
@@ -871,7 +849,7 @@ python -m foveacore render_language --config configs/phase13.yaml --packet <pack
 
 | 인터페이스 | 필수 필드 계약 |
 |---|---|
-| **Observation** | `modality`, `source_id`, `location/span`, `features`, `observed_mask`, `confidence`, `cost`, `provenance` |
+| **Observation** | `modality`, `source_id`, `location/span`, `features`, `observed_mask`, `confidence`, `cost`, `provenance` (이미지: `preprocess_profile_id`, `original_hw`, `processed_hw`, `sensor_profile`, `grid_size`를 provenance/metadata에 포함; 기본 `[B,4,5,5]`, 확장 별도 `[B,4,97,97]`) |
 | **Action** | `modality`, `target`, `resolution/window`, `cost` (오직 센서만 실제 원본 데이터 조회 허용) |
 | **Structure** | `entity/attribute/relation`, `embedding`, `uncertainty`, `source_evidence` |
 | **Hypothesis** | `concept_id`, `belief`, `supporting/contradicting_evidence` |
@@ -964,11 +942,12 @@ python -m foveacore render_language --config configs/phase13.yaml --packet <pack
 - `precision`(`"fp32"` 등), `allow_tf32`, `deterministic_settings`(`use_deterministic_algorithms`, `cudnn_deterministic`, `cudnn_benchmark`, `cublas_workspace_config`)
 - `param_counts` (`total`, `active`, `frozen`, `target_encoder_Q`, `das_learnable`), `weight_size_fp32`, `memory_size`, `quarantine_size`, `checkpoint_size`, `peak_vram`, `peak_ram`
 - `generated_sample_count`, `update_count`, `quarantined_count`, `inference_latency`, `sensor_policy`, `observation_history`
+- **이미지/센서 사용 런 필수:** `original_hw`, `processed_hw`, `max_side`, `resize_method`, `preprocess_profile_id`, `sensor_profile`, `grid_size`, `sensor_window_sizes`, `sensor_pooling`, `sensor_mask_semantics` 및 비용/좌표 기준(미해당 런은 `N/A` + 사유)
 
 ## 부록 5. 추론·학습 `trace` 및 저장 규격
 
 - **파일 형식:** `traces/inference.jsonl`(스텝 trace), `traces/learning.jsonl`(적응 trace), `metrics.csv`(집계), `arrays/*.npz`(수치 배열), `figures/`(PNG/SVG), `report.html`, `summary.json`, `memory.json`, `quarantine.json`(격리 활성/발생 시), `checkpoint.pt`.
-- **`inference.jsonl` 스텝별 필수 필드:** `step`, `location`/`span`, `valid_mask`, `sensor_access_area` (`total`, `stroke`, `fovea_5x5`), `novelty_weight_rho`, `embedding_ref`/`geometry_ref`, `posterior_per_hypothesis`, `selected_action`, `candidate_action_scores`, `predicted_vs_observed_feature_ref`, `step_latency`, `stop_reason`.
+- **`inference.jsonl` 스텝별 필수 필드:** `step`, `location`/`span`(전처리 후 `[0,1]` 및 픽셀 좌표), `valid_mask`(출력 마스크 + 채널별 별도 유효비율 참조), `sensor_access_area` (`total`, `stroke`, `fovea_5x5`), `novelty_weight_rho`, `embedding_ref`/`geometry_ref`, `posterior_per_hypothesis`, `selected_action`, `candidate_action_scores`, `predicted_vs_observed_feature_ref`, `step_latency`, `stop_reason`.
 - **`learning.jsonl` 업데이트/게이트별 필수 필드:** `generated_id`, `parent_support_id`, `counterfactual_type`(4종 구분), `conflict_gate_decision`(`ADMITTED` / `QUARANTINED` / `SANDBOX_REVIEWED` / `PROMOTED` / `DISCARDED`), `update_status`(`APPLIED` / `ABORTED_NUMERICAL` / `SKIPPED`), `abort_reason`, `selection_score`, `update_step`, `loss_breakdown`(`L_class`, `L_predict`, `L_ranking`, `L_anchor`), `trainable_params`, `parameter_delta`, `gradient_norm`, `checkpoint_id_before`, `checkpoint_id_after`, `feedback_reveal_timestamp`.
 - **기록 및 시각화 원칙:** 누락 값은 `null` 명시, 추정치와 실측치 구분, 공식 성능 측정 시 `최소 logging 모드`와 상세 `instrumentation 모드` 분리. PCA는 전후 동일 고정 투영 사용(UMAP/t-SNE는 탐색 전용이며 거리/전이 판정 금지), 실제 데이터와 mock/demo 데이터 명확히 구분. GPU 시간은 비동기 완료 후 `torch.cuda.synchronize()` 후 수치 확정하고, 측정 전·구간당 최소 3회 워밍업 후 측정합니다.
 
@@ -1011,7 +990,7 @@ python -m foveacore render_language --config configs/phase13.yaml --packet <pack
 
 ## 부록 9. 단계별 필수 테스트 및 산출물 계약
 
-- **Phase 0~7 핵심 단위·통합 테스트:** GPU·CUDA·정밀도(FP32/TF32 차단)·결정론 설정 및 `peak_vram` manifest 기록 검증, 센서 좌표/마스크/보간/반픽셀, 대각 이동/clip/중복 마스킹, 미래 픽셀 접근 차단(`Active-coverage`·`EIG` 포함), `W` 분산 클램핑 및 `logsumexp` 기반 posterior 정규화·엔트로피 `NaN` 방지·유효 마스크 0 시 0 나눗셈 방지, 중복 감쇠 계수 $\rho_t$ 범위/갱신 검증, support/query 격리, 사전학습/OOD 중복 검출, `DAS` 2단계 초기화·`P0` $\Sigma_0=I$·공통 속성 0개 증거 부족 처리, posterior 정규화, 가설 셔플 기술 라우팅, `R1_matched vs R4_pool` 통제 변수 일치, 유형 ③ 기각 반례 라벨 차단, $\Delta\mu_c/w_c/W$ delta 검증, **수치 오류(`NaN/Inf`) 발생 시 즉시 학습 중단 및 기존 `checkpoint.pt`·`memory.json` 무손실 보존(원자적 롤백)**, **모순 교정(`1→9`) 시 샌드박스 Replay 검토 중 활성 가중치·`memory.json` 불변($\Delta=0$), 동일 `image_hash`/단일 미검증 출처 스팸 승격 차단, 독립 경험 유입 후 `PROMOTED` vs `DISCARDED` 전이 테스트**, `freeze_manifest` 통합 동결 무결성, 통계·비용 계산, 스트림 순서(예측→공개→적응)·재시작·버전 불변성.
+- **Phase 0~7 핵심 단위·통합 테스트:** GPU·CUDA·정밀도(FP32/TF32 차단)·결정론 설정 및 `peak_vram` manifest 기록 검증, 임의 해상도·1024 긴 변 상한/종횡비·4채널 순서·Masked Adaptive AvgPool·빈 bin·F4 정렬 및 센서 좌표/마스크/보간/반픽셀, 대각 이동/clip/중복 마스킹, 미래 픽셀 접근 차단(`Active-coverage`·`EIG` 포함), `W` 분산 클램핑 및 `logsumexp` 기반 posterior 정규화·엔트로피 `NaN` 방지·유효 마스크 0 시 0 나눗셈 방지, 중복 감쇠 계수 $\rho_t$ 범위/갱신 검증, support/query 격리, 사전학습/OOD 중복 검출, `DAS` 2단계 초기화·`P0` $\Sigma_0=I$·공통 속성 0개 증거 부족 처리, posterior 정규화, 가설 셔플 기술 라우팅, `R1_matched vs R4_pool` 통제 변수 일치, 유형 ③ 기각 반례 라벨 차단, $\Delta\mu_c/w_c/W$ delta 검증, **수치 오류(`NaN/Inf`) 발생 시 즉시 학습 중단 및 기존 `checkpoint.pt`·`memory.json` 무손실 보존(원자적 롤백)**, **모순 교정(`1→9`) 시 샌드박스 Replay 검토 중 활성 가중치·`memory.json` 불변($\Delta=0$), 동일 `image_hash`/단일 미검증 출처 스팸 승격 차단, 독립 경험 유입 후 `PROMOTED` vs `DISCARDED` 전이 테스트**, `freeze_manifest` 통합 동결 무결성, 통계·비용 계산, 스트림 순서(예측→공개→적응)·재시작·버전 불변성.
 - **Phase 8~13 추가 필수 테스트:** modality routing, 미열람 텍스트 접근 차단, 정렬 붕괴·교차 감각 누출, **A안 단방향 렌더링 7종 필수 테스트**(`모의/실제 LLM 출력 중 코어 재호출 0회`, `쓰기 호출 0회`, `렌더링 전후 posterior/memory/checkpoint/활성 버전 불변`, `출력 내 도구 호출 유사 문자열 역유입 차단`, `Unknown·Quarantined·교정 안내·등록 상태 보존`, `렌더러 교체 호환`, `오류 시 재호출 없는 템플릿 폴백`), Phase 12 구성성 경계 프로브(`12/21 → UNKNOWN`), Phase 13 의미 패킷 불변·부정/수치/관계 보존.
 - **표준 산출물 디렉토리 (`artifacts/<run_id>/`):**
   `manifest.json`, `freeze_manifest.json`(Phase 6~7), `config.yaml`, `checkpoint.pt`, `memory.json`, `quarantine.json`(격리 활성/발생 시), `traces/{inference,learning}.jsonl`, `arrays/`, `metrics.csv`, `summary.json`, `figures/`, `report.html`, `phase_report.md`.

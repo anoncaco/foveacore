@@ -40,6 +40,15 @@
 
 ## 2. 구현 전 확정 기준 (Decision Lock-in)
 
+### 2.0 공통 이미지 입력·전처리 규격 (Phase 1 센서용 계약 선확정)
+
+- **원본 해상도 임의 수용:** 센서 입력은 `(H,W)`(`H,W≥1`)이며 원본을 정사각형으로 강제하거나 작은 이미지를 업스케일하지 않습니다. 센서 출력 격자만 프로파일별로 고정합니다. 기본 `5×5×4`(PyTorch `[B,4,5,5]`), Phase 7 검증 후 독립 스케일업 `97×97×4`(`[B,4,97,97]`)입니다. **MNIST B0/B1 및 공식 기본 28×28/56×56 입력 조건은 기존대로 유지**합니다.
+- **긴 변 상한 `max_side=1024`:** `L=max(H,W)`. `L≤1024`이면 `(H',W')=(H,W)` 그대로 사용하며, `L>1024`이면 비율을 유지하여 `(H',W')=(max(1,round(H·1024/L)),max(1,round(W·1024/L)))`로 **축소만** 합니다(`AdaptiveAvgPool2d((H',W'))` 또는 동일 의미론의 면적 평균 축소). 예: `4096×3072→1024×768`, `3072×4096→768×1024`, `1920×1080→1024×576`.
+- **좌표 일치:** 시선 좌표는 처리 캔버스 `(H',W')`의 픽셀 중심을 기준으로 `[0,1]` 정규화합니다(길이 1인 축의 중심은 `0.5`). 내부 `grid_sample(align_corners=False)` 좌표 변환, 기존 `[-1,1]`·픽셀 좌표 변환 및 반픽셀 보간 정책을 함께 테스트합니다.
+- **Phase 1 출력 계약:** F3 기본은 **중심 5×5 원본 + 중간 11×11→5×5 Adaptive Max Pooling + 외곽 19×19→5×5 Masked Adaptive Average Pooling + 외곽 유효비율 5×5 마스크**의 4채널 출력입니다. 경계 밖은 `0`으로 채우되, 평균 계산의 분모에서 제외합니다. `adaptive_avg_pool2d`는 `count_include_pad=False` 인자를 받지 않으므로 **마스크 기반 평균**을 구현하고, 빈 영역은 `0`으로 처리합니다. 중심/중간/외곽 각각의 개별 유효 마스크는 별도 메타데이터에 보존합니다. F4(외곽 19→3)는 최근접 정렬로 공통 5×5 4채널을 유지하며 실제 3×3 정보량을 별도 기록합니다.
+- **별도 고해상도 프로파일:** Phase 7 이후 `97×97` 원본 + `257×257→97×97` Max + `513×513→97×97` Masked Average + `97×97` 마스크로 확장합니다. 이는 새로운 센서·입력 투영·보폭·비용·체크포인트 프로파일이므로 **Phase 0~7의 사전등록된 비교 조건을 변경하지 않습니다.**
+- **Phase 0 실행 범위:** 입력 정규화 설정·인터페이스·해시/메타데이터·단위 테스트 fixture만 확정하고, 실제 풀링 센서 구현은 Phase 1로 둡니다.
+
 ### 2.1 Seed 정책 (용도별 5종 시드 분리)
 - `split_seed`: 데이터셋 분할(`MNIST train` 3분할, `MNIST test` 2분할, OOD/전이 분할) 고정용 마스터 시드
 - `episode_seed`: `10-way 1-shot` Support/Query 에피소드 샘플링 전용 시드
@@ -131,7 +140,7 @@
 - **의존성 잠금 파일 생성:** `pip freeze > locks/phase0_requirements.lock`으로 현재 GPU/CUDA 환경 의존성 버전을 Git으로 추적·고정하고, `dependency_lock_hash`는 이 lock 파일의 SHA-256으로 산출
 
 ### `T1` — 패키지 골격, CLI 및 Git 추적 명확화 (`0.1`)
-- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현
+- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현 (`input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.grid_size=5`, `sensor.channels=4`, `sensor.profile=F3`는 **센서 계약 설정값**으로 선등록; 고해상도 `grid_size=97`는 별도 프로파일로 관리)
 - `src/foveacore/__main__.py` CLI 진입점 구현 (`validate`, `build-splits`, `smoke-baseline`)
 - `git_dirty` 판정 기준 명문화: `git status --porcelain` 기준으로 `src/`, `configs/`, `locks/`, `pyproject.toml` 내 수정·미추적(untracked) 파일 존재 시 `git_dirty = True`
 - 금지 패키지(`transformers`, `openai`, `anthropic`, `llama_cpp`, `vllm`, `langchain` 등) 미설치/미임포트 검증 테스트
@@ -144,6 +153,7 @@
   - 비결정론 CUDA 연산(`grid_sample`·`scatter_add` 등 Phase 1~5 예정 연산 포함) 검출 테스트 훅 제공
 - `utils/provenance.py`: OS/CPU/GPU(`gpu_name`)/CUDA(`cuda_version`)/cuDNN(`cudnn_version`)/PyTorch(`torch_version`)/정밀도(`precision`, `allow_tf32`)/결정론 설정/스레드/Git/패키지 수집
 - `core/exceptions.py` (또는 `core/contracts.py`): 명시적 `NumericalInstabilityError` 정의(`assert`는 `python -O`에서 무시되므로 수치 검증에 사용 금지)
+- `core/contracts.py`: 이미지 Observation provenance의 `original_hw`, `processed_hw`, `preprocess_profile_id`, `[0,1]` 좌표 및 `sensor_profile/grid_size`를 추가하고 기본/확장 격자 프로파일을 서로 호환 불가한 별개 버전으로 관리합니다.
 - `core/contracts.py`: `v1.9.3` 부록 1의 6대 인터페이스(`Observation`, `Action`, `Structure`, `Hypothesis`, `Prediction`, `Memory`) 정의
   - **내부 데이터·Tensor·버퍼 불변성 보호:**
     - `dict` → `MappingProxyType`, `list` → `tuple`, `np.ndarray` → `setflags(write=False)`
@@ -201,8 +211,11 @@ flowchart LR
     - `quick_smoke` (단위·CI 테스트): `1~3` 에피소드(또는 소형 비숫자 fixture)
     - `phase0_full_smoke` (Phase 0 완료 기준): 고정 `episode_seed`로 **`30` 에피소드** (`10-way 1-shot`, `n_query_per_class=20`, 에피소드당 200 Query) 생성·실행 (단, 무튜닝 배선 검증 전용).
 
+- **센서 인수 조건:** T4의 `BlindSample`과 향후 Phase 1 센서만 전처리 이미지에 접근하는 역할을 분리합니다. T4 에피소드/스트림은 전처리 프로파일·시선 좌표 변환을 메타데이터에 기록하며 전체 처리 이미지를 모델 임베딩에 우회 전달하지 않습니다.
+
 ### `T5` — B0/B1 기준선 (`0.7`)
 - `baselines/pixel_knn.py` (`B0`), `baselines/hog_knn.py` (`B1`, `scikit-image` 고정) 구현 (`2.3절` 경계 조건 반영).
+- MNIST B0/B1 입력 `28×28`은 **기존 784차원 픽셀/HOG 기준선 그대로** 처리하며 새로운 4채널 센서 출력으로 대체하지 않습니다(비교군 공정성 유지).
 - NumPy/`scikit-image` 기반 연산 수행 후에도 GPU 실행 환경 메타데이터(`compute_device`, `gpu_name`, `cuda_version`, `precision` 등)를 `manifest.json` 규격에 맞게 기록(`N/A` 또는 활성 환경 명시).
 - `BlindSample` 입력 및 `ReadOnlyInferenceGuard` 연동, 동일 에피소드 JSON 파일 입력 처리, Accuracy·Confusion Matrix·동점 횟수 기록.
 
@@ -212,6 +225,8 @@ flowchart LR
   - `total <= 1,000,000,000 (1B)` & `weight_size_fp32 <= 4 GB (4,000,000,000 bytes)` 상한 검사
   - `B0/B1` 비파라미터 상태 저장량(`non_param_state_bytes`), `FLOPs`(`1 MAC = 2 FLOPs`) + `unsupported_ops`, GPU 동기화 지연(`torch.cuda.synchronize()` + 최소 3회 워밍업), `minimal` vs `instrumentation` 모드 기록
   - `peak_vram` (`reset_peak_memory_stats`, `max_memory_allocated`, `max_memory_reserved` — `infer`/`adapt` 분리) 및 서브프로세스 격리 `RSS Peak` + 순증가량 + `tracemalloc` 측정
+
+- **향후 Phase 1/확장 계측 항목 계약:** 처리 전후 `(H,W)`, 센서 프로파일(`F1~F4`/확장), `grid_size`, 패치 크기, 4채널 전송량, 리사이즈·풀링 GPU 비용, 원본 접근 면적을 분리 기록하도록 필드 규격만 준비합니다.
 
 ### `T7` — Manifest·산출물 계약·5종 Seed·실패 복구 (`0.9`)
 - **표준 산출물 디렉토리 (`artifacts/<run_id>/`, 부록 5 준수):**
@@ -223,6 +238,7 @@ flowchart LR
   - **GPU/CUDA/정밀도/결정론 환경:** `compute_device`, `gpu_name`, `cuda_version`, `cudnn_version`, `torch_version`, `precision`(`"fp32"` 등), `allow_tf32`, `deterministic_settings`(`use_deterministic_algorithms`, `cudnn_deterministic`, `cudnn_benchmark`, `cublas_workspace_config`)
   - **자원/비용:** `param_counts` (`total`, `active`, `frozen`, `target_encoder_Q`, `das_learnable`, `non_param_state_bytes`), `weight_size_fp32`, `memory_size`, `quarantine_size`, `checkpoint_size`, `peak_vram`, `peak_ram`
   - **실행 trace 요약:** `generated_sample_count`, `update_count`, `quarantined_count`, `inference_latency`, `sensor_policy`, `observation_history`
+  - **이미지 전처리·센서 프로파일(이미지 런에 해당):** `original_hw`, `processed_hw`, `max_side`, `resize_method`, `preprocess_profile_id`, `sensor_profile`, `grid_size`, `sensor_window_sizes`, `sensor_pooling`, `sensor_mask_semantics` (센서 미구현 Phase 0 런은 `N/A` + 사유)
   *(미해당 항목은 `null` 또는 `"N/A (사유)"` 명시)*
 - 공식 평가(`Phase 6~7`) 모드에서 `git_dirty == True` 시 실행 차단 훅, 원자적 저장(`atomic write`).
 - **실패 복구 테스트 7종:** 손상 데이터, 잘못된 YAML, 중복 Support, 봉인 데이터/`ADAPT` 평가 라벨 접근, `INFER` 중 파라미터·버퍼·Tensor·메모리 변경, 산출물 저장 I/O 예외, **`NaN`/`Inf` 주입 시 `NumericalInstabilityError` 발생(`python -O` 옵션 포함)** → 모두 `exit_code != 0` 및 `manifest.json` `run_status: "FAILED"`·`failure_reason` 기록.
@@ -264,3 +280,5 @@ flowchart LR
 8. **Manifest·산출물·실패 복구 (`T7`):** 부록 4·5 전체 파일 및 필드(5종 시드 + `gpu_name`/`cuda_version`/`precision`/`deterministic_settings`/`peak_vram` 포함) 기록, `git_dirty` 차단 훅, 실패 복구 테스트 7종(`NumericalInstabilityError` 포함, `python -O`에서도 검출) 모두 `exit_code != 0` + `FAILED` 원인 기록 확인.
 9. **통계 판정 및 예외 처리 (`T8`):** MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 배제, `n<2`·`σ=0`·`NaN`·`MDE<=0` 예외 처리 단위 테스트 전수 통과.
 10. **사전등록 완료 (`T8`):** `experiments/preregistration_v1.9.3.md` 확정 및 `python -m foveacore validate --config configs/phase0.yaml` 최종 PASS.
+
+**Phase 1 센서 인수용 추가 계약 테스트(Phase 0에서는 스키마/fixture만):** `28×28`·`56×56` 무변형, `640×480`·`800×1000` 무업스케일, `4096×3072`·`3072×4096`·`1920×1080`의 예상 결과 크기, 1픽셀 축, `(x,y)` 좌표 왕복, 채널 4개 및 유효비율 범위, 마스크 기반 평균의 빈 bin 처리, F4 3×3→5×5 정렬, 원본/전처리 해시·프로파일 기록. **실제 GPU 풀링/센서 본체의 PASS는 Phase 1 게이트**로 유지합니다.
