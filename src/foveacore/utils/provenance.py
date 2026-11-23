@@ -5,11 +5,13 @@ PyTorch(`torch_version`)/정밀도(`precision`, `allow_tf32`)/결정론 설정/
 스레드/Git/패키지 수집.
 """
 
+import hashlib
 import os
 import platform
 import socket
 import subprocess
 from importlib import metadata
+from pathlib import Path
 
 from foveacore.utils.seed import DEFAULT_SEEDS
 
@@ -90,6 +92,14 @@ def _collect_packages():
     return sorted(pkgs)
 
 
+def _dependency_lock_hash():
+    """locks/phase0_requirements.lock 파일의 SHA-256 해시 반환."""
+    lock_path = Path("locks/phase0_requirements.lock")
+    if lock_path.exists():
+        return hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    return None
+
+
 def collect_provenance(seeds=None):
     """전체 환경 정보 수집 → dict(manifest에 포함되는 필드 그룹)."""
     from foveacore.utils.seed import DEFAULT_SEEDS
@@ -124,6 +134,7 @@ def collect_provenance(seeds=None):
         "git_commit": get_git_commit(),
         "git_dirty": is_git_dirty(),
         "packages": _collect_packages(),
+        "dependency_lock_hash": _dependency_lock_hash(),
         "gpu_name": get_gpu_name(),
         "cuda_version": get_cuda_version(),
         "cudnn_version": get_cudnn_version(),
