@@ -93,8 +93,11 @@ def _collect_packages():
 
 
 def _dependency_lock_hash():
-    """locks/phase0_requirements.lock 파일의 SHA-256 해시 반환."""
-    lock_path = Path("locks/phase0_requirements.lock")
+    """locks/phase0_requirements.lock 파일의 SHA-256 해시 반환.
+    실행 위치와 무관하게 프로젝트 루트의 잠금 파일을 읽음.
+    """
+    project_root = Path(__file__).resolve().parents[3]
+    lock_path = project_root / "locks" / "phase0_requirements.lock"
     if lock_path.exists():
         return hashlib.sha256(lock_path.read_bytes()).hexdigest()
     return None

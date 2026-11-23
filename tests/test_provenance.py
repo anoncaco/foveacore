@@ -36,7 +36,8 @@ def test_dependency_lock_hash_present():
 def test_dependency_lock_hash_matches_lock_file():
     """dependency_lock_hash가 locks/phase0_requirements.lock의 SHA-256과 일치해야 함."""
     p = collect_provenance()
-    lock_path = Path("locks/phase0_requirements.lock")
+    project_root = Path(__file__).resolve().parents[1]
+    lock_path = project_root / "locks" / "phase0_requirements.lock"
     expected = hashlib.sha256(lock_path.read_bytes()).hexdigest()
     assert p["dependency_lock_hash"] == expected, (
         f"dependency_lock_hash 불일치: provenance={p['dependency_lock_hash']}, "
@@ -53,3 +54,24 @@ def test_t0_gitignore_excludes_agent_files():
     tracked = result.stdout.splitlines()
     for f in [".opencode/", "AGENTS.md", "opencode.jsonc"]:
         assert f not in tracked, f"{f}가 Git에 추적되고 있음"
+
+
+def test_dependency_lock_hash_from_subdirectory():
+    """하위 디렉터리에서도 프로젝트 루트의 lock 파일을 읽어야 함."""
+    import os
+
+    project_root = Path(__file__).resolve().parents[1]
+    lock_path = project_root / "locks" / "phase0_requirements.lock"
+    expected = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+
+    original_cwd = Path.cwd()
+    tests_dir = Path(__file__).resolve().parent
+    try:
+        os.chdir(tests_dir)
+        p = collect_provenance()
+        assert p["dependency_lock_hash"] == expected, (
+            f"하위 디렉터리에서 hash 불일치: "
+            f"provenance={p['dependency_lock_hash']}, lock_file={expected}"
+        )
+    finally:
+        os.chdir(original_cwd)
