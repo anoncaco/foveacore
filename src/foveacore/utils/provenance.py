@@ -72,10 +72,11 @@ def get_git_commit():
 def is_git_dirty():
     # git_dirty 기준(STATE.md): src/, configs/, locks/, pyproject.toml 내 수정·미추적(untracked) 파일 존재
     # 조회 실패는 clean(False)과 구분하기 위해 None 반환(T2-10).
+    project_root = Path(__file__).resolve().parents[3]
     try:
         out = subprocess.run(
             ["git", "status", "--porcelain", "--", "src", "configs", "locks", "pyproject.toml"],
-            capture_output=True, text=True, check=True,
+            cwd=project_root, capture_output=True, text=True, check=True,
         )
         return bool(out.stdout.strip())
     except Exception:

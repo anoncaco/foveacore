@@ -4,6 +4,15 @@ schema_version: "1.0"
 experiment_protocol: STRICT_1SHOT
 pretraining_policy: P1
 
+# 센서 구현 전에 확정하는 입력·센서 계약(T1)
+input:
+  max_side: 1024
+  resize_method: adaptive_average
+sensor:
+  profile: F3
+  grid_size: 5
+  channels: 4
+
 # 지속 학습 분할: [초기 support 10장], [개발 스트림], [본 실험 학습 스트림] ID 격리 (v1.9.3 Phase 0)
 datasets:
   mnist_train: 60000

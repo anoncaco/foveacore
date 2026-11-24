@@ -77,7 +77,11 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
-    assert_no_forbidden_packages()
+    try:
+        assert_no_forbidden_packages()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
     if args.command == "validate":
         cfg = load_phase0_config(args.config)

@@ -68,13 +68,50 @@ dev (구현) → verify (검증/수정) → main (최종 통합)
 | 5 | `STATE.md` | 단계·버전·완료 노트 | 파일 존재, Git 추적 중 |
 
 
-## T1 완료 노트 (`6cd9193`)
+## T1 재구축 완료 노트 (`d9a338c`)
 
-- `configs/phase0.yaml` 작성(STRICT_1SHOT, P1, 분할·Smoke 수량 스키마).
-- 스키마 검증기: `foveacore.config.load_phase0_config` / `validate_phase0_config`.
-- CLI: `src/foveacore/__main__.py` — `validate`(PASS)/`build-splits`/`smoke-baseline`.
-- 금지 패키지 검증기: `foveacore.forbidden_packages`(`transformers`·`openai`·`anthropic`·`llama_cpp`·`vllm`·`langchain` 미임포트 확인).
-- 검증: `pytest tests/ -q`(6 passed), `python -m foveacore validate --config configs/phase0.yaml` → `validate PASS` exit=0.
+- 기준 커밋: `d9a338c` (재구축 직전 HEAD).
+- 커밋: `fix(phase0): T1 재구축`.
+- 변경 파일:
+  - `STATE.md`
+  - `configs/phase0.yaml`
+  - `src/foveacore/config.py`
+  - `src/foveacore/__main__.py`
+  - `src/foveacore/forbidden_packages.py`
+  - `src/foveacore/utils/provenance.py`
+  - `tests/test_config.py`
+  - `tests/test_cli.py` (신규)
+  - `tests/test_forbidden_packages.py`
+  - `tests/test_provenance.py`
+
+### 요구사항 구현 방식 구분
+
+- [코드·테스트 반영] `input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.profile=F3`, `sensor.grid_size=5`, `sensor.channels=4`를 설정에 선등록하고 스키마 검증 추가.
+- [코드·테스트 반영] 고해상도 `grid_size=97`을 별도 `F3_HIRES` 프로파일로 분리하고 F3와의 격자·채널 불일치를 거부.
+- [코드·테스트 반영] `experiment_protocol`/`pretraining_policy`의 비문자열 값도 `TypeError` 없이 설정 오류로 반환.
+- [코드·테스트 반영] `validate`, `build-splits`, `smoke-baseline` 진입점 및 오류 종료 처리 검증. `smoke-baseline` 실제 실행은 [후속 이관] T5/T8.
+- [코드·테스트 반영] `git_dirty`를 프로젝트 루트 기준 `git status --porcelain`로 수정해 서브디렉터리에서도 `src/`, `configs/`, `locks/`, `pyproject.toml` 변경을 감지.
+- [코드·테스트 반영] 이미 로드된 금지 패키지(`__spec__=None`)와 `find_spec` 예외를 안전하게 진단하고 CLI는 `ERROR:`와 exit 1로 처리.
+
+### 요구사항 ↔ 테스트
+
+| 요구사항 | 테스트 |
+|----------|--------|
+| 입력·센서 계약 선등록 | `tests/test_config.py::test_input_sensor_contract_registered` |
+| max_side/resize_method 검증 | `test_input_max_side_must_be_1024`, `test_input_resize_method_is_validated` |
+| F3 격자·채널 및 고해상도 프로파일 분리 | `test_f3_profile_rejects_mismatched_contract`, `test_high_resolution_profile_is_separate` |
+| CLI 진입점·설정 오류 | `tests/test_cli.py` |
+| git_dirty 경로·서브디렉터리 | `tests/test_provenance.py::test_git_dirty_*` |
+| 금지 패키지 설치·로드 진단 | `tests/test_forbidden_packages.py` |
+
+### 검증 명령 & 실제 결과
+
+- `.venv/bin/python -m pytest tests/ -q` → **85 passed, 1 skipped** (exit 0, 로그: `tmp_ai/logs/t1_rebuild_pytest.log`).
+- `.venv/bin/python -m foveacore validate --config configs/phase0.yaml` → `validate PASS`, exit 0.
+- 잘못된 `max_side=0`, `resize_method=nearest`, F3+97 격자, F3+3채널, `smoke.way=9`, `experiment_protocol=[]` → 모두 `ERROR:`와 exit 1 (로그: `tmp_ai/logs/t1_rebuild_cli.log`).
+- `tests/` CWD에서 `src/` 미추적 파일 생성 → `git_dirty=True`.
+- 로드된 `openai` 모듈의 `__spec__=None` → `RuntimeError` 진단.
+- `git diff --check` → 통과(exit 0).
 
 ## T2 완료 노트 (현재 커밋)
 

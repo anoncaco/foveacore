@@ -4,7 +4,10 @@ import hashlib
 import subprocess
 from pathlib import Path
 
-from foveacore.utils.provenance import collect_provenance
+import pytest
+
+from foveacore.utils import provenance
+from foveacore.utils.provenance import collect_provenance, is_git_dirty
 
 
 def test_collect_provenance_required_keys():
@@ -75,3 +78,53 @@ def test_dependency_lock_hash_from_subdirectory():
         )
     finally:
         os.chdir(original_cwd)
+
+
+@pytest.fixture
+def git_repo(tmp_path, monkeypatch):
+    """격리된 임시 Git 저장소와 프로젝트 루트 경로를 제공한다."""
+    root = tmp_path / "repo"
+    for directory in ("src", "configs", "locks", "tests"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'probe'\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.name=T1 Test", "-c", "user.email=t1@example.invalid",
+            "commit", "-qm", "fixture",
+        ],
+        cwd=root,
+        check=True,
+    )
+    monkeypatch.setattr(provenance, "__file__", str(root / "src" / "foveacore" / "utils" / "provenance.py"))
+    return root
+
+
+@pytest.mark.parametrize("path", ["src/probe.py", "configs/probe.yaml", "locks/probe.lock", "pyproject.toml"])
+def test_git_dirty_detects_contract_paths(git_repo, path):
+    target = git_repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("changed\n", encoding="utf-8")
+    assert is_git_dirty() is True
+
+
+def test_git_dirty_ignores_unrelated_paths(git_repo):
+    (git_repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+    (git_repo / "tests" / "probe_test.py").write_text("unrelated\n", encoding="utf-8")
+    assert is_git_dirty() is False
+
+
+def test_git_dirty_from_subdirectory(git_repo, monkeypatch):
+    (git_repo / "src" / "untracked_probe.py").write_text("untracked\n", encoding="utf-8")
+    monkeypatch.chdir(git_repo / "tests")
+    assert is_git_dirty() is True
+
+
+def test_git_dirty_clean_repository(git_repo):
+    assert is_git_dirty() is False
+
+
+def test_git_dirty_returns_none_outside_repository(tmp_path, monkeypatch):
+    monkeypatch.setattr(provenance, "__file__", str(tmp_path / "src" / "foveacore" / "utils" / "provenance.py"))
+    assert is_git_dirty() is None

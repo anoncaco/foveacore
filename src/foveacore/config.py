@@ -6,12 +6,26 @@ import yaml
 
 ALLOWED_PROTOCOLS = {"STRICT_1SHOT", "CONTINUAL", "REFERENCE_P3"}
 ALLOWED_POLICIES = {"P0", "P1", "P2", "P3"}
+INPUT_MAX_SIDE = 1024
+ALLOWED_RESIZE_METHODS = {"adaptive_average"}
+
+# 기본 F3 계약과 고해상도 확장 프로파일을 분리한다.
+# grid_size/channels는 프로파일과 반드시 일치해야 한다.
+SENSOR_PROFILES = {
+    "F3": {"grid_size": 5, "channels": 4},
+    "F3_HIRES": {"grid_size": 97, "channels": 4},
+}
+
+REQUIRED_INPUT_KEYS = {"max_side", "resize_method"}
+REQUIRED_SENSOR_KEYS = {"profile", "grid_size", "channels"}
 
 REQUIRED_KEYS = {
     "version",
     "schema_version",
     "experiment_protocol",
     "pretraining_policy",
+    "input",
+    "sensor",
     "datasets",
     "splits_synthetic",
     "smoke",
@@ -70,16 +84,70 @@ def validate_phase0_config(cfg):
         errors.append("schema_version이 비어있지 않은 문자열이어야 합니다.")
 
     # experiment protocol / pretraining policy
-    if cfg["experiment_protocol"] not in ALLOWED_PROTOCOLS:
+    protocol = cfg["experiment_protocol"]
+    policy = cfg["pretraining_policy"]
+    if not isinstance(protocol, str) or protocol not in ALLOWED_PROTOCOLS:
         errors.append(
-            f"experiment_protocol 부적절: {cfg['experiment_protocol']!r} "
+            f"experiment_protocol 부적절: {protocol!r} "
             f"(허용: {sorted(ALLOWED_PROTOCOLS)})"
         )
-    if cfg["pretraining_policy"] not in ALLOWED_POLICIES:
+    if not isinstance(policy, str) or policy not in ALLOWED_POLICIES:
         errors.append(
-            f"pretraining_policy 부적절: {cfg['pretraining_policy']!r} "
+            f"pretraining_policy 부적절: {policy!r} "
             f"(허용: {sorted(ALLOWED_POLICIES)})"
         )
+
+    # input / sensor contract (T1)
+    input_cfg = cfg["input"]
+    if not isinstance(input_cfg, dict):
+        errors.append("input이 dict여야 합니다.")
+    else:
+        for key in sorted(REQUIRED_INPUT_KEYS):
+            if key not in input_cfg:
+                errors.append(f"input.{key} 누락")
+        max_side = input_cfg.get("max_side")
+        if not _is_pos_int(max_side):
+            errors.append("input.max_side가 양의 정수가 아닙니다.")
+        elif max_side != INPUT_MAX_SIDE:
+            errors.append(f"input.max_side는 {INPUT_MAX_SIDE}이어야 합니다.")
+        resize_method = input_cfg.get("resize_method")
+        if not isinstance(resize_method, str) or resize_method not in ALLOWED_RESIZE_METHODS:
+            errors.append(
+                f"input.resize_method 부적절: {resize_method!r} "
+                f"(허용: {sorted(ALLOWED_RESIZE_METHODS)})"
+            )
+
+    sensor = cfg["sensor"]
+    if not isinstance(sensor, dict):
+        errors.append("sensor가 dict여야 합니다.")
+    else:
+        for key in sorted(REQUIRED_SENSOR_KEYS):
+            if key not in sensor:
+                errors.append(f"sensor.{key} 누락")
+        profile = sensor.get("profile")
+        if not isinstance(profile, str) or profile not in SENSOR_PROFILES:
+            errors.append(
+                f"sensor.profile 부적절: {profile!r} "
+                f"(허용: {sorted(SENSOR_PROFILES)})"
+            )
+        else:
+            expected = SENSOR_PROFILES[profile]
+            grid_size = sensor.get("grid_size")
+            channels = sensor.get("channels")
+            if not _is_pos_int(grid_size):
+                errors.append("sensor.grid_size가 양의 정수가 아닙니다.")
+            elif grid_size != expected["grid_size"]:
+                errors.append(
+                    f"sensor.grid_size는 {profile} 프로파일에서 "
+                    f"{expected['grid_size']}이어야 합니다."
+                )
+            if not _is_pos_int(channels):
+                errors.append("sensor.channels가 양의 정수가 아닙니다.")
+            elif channels != expected["channels"]:
+                errors.append(
+                    f"sensor.channels는 {profile} 프로파일에서 "
+                    f"{expected['channels']}이어야 합니다."
+                )
 
     # datasets
     datasets = cfg["datasets"]
