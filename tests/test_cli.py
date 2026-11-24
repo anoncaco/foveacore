@@ -68,6 +68,17 @@ def test_forbidden_package_cli_error_is_clean(monkeypatch, capsys):
     assert "openai" in output
 
 
+def test_cublas_setup_error_is_clean(monkeypatch, capsys):
+    def fail():
+        raise RuntimeError("CUBLAS setup failed")
+
+    monkeypatch.setattr(cli, "ensure_cublas_before_cuda", fail)
+    assert cli.main(["validate", "--config", str(CONFIG_PATH)]) == 1
+    output = capsys.readouterr().out
+    assert "ERROR:" in output
+    assert "CUBLAS setup failed" in output
+
+
 def test_forbidden_package_guard_available():
     assert callable(assert_no_forbidden_packages)
 

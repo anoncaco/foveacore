@@ -7,18 +7,18 @@ from pathlib import Path
 import pytest
 
 from foveacore.utils import provenance
-from foveacore.utils.provenance import collect_provenance, is_git_dirty
+from foveacore.utils.provenance import collect_provenance, get_git_commit, is_git_dirty
 
 
 def test_collect_provenance_required_keys():
     p = collect_provenance()
     for key in (
-        "schema_version", "os", "hostname", "torch_version", "compute_device",
+        "schema_version", "os", "hostname", "cpu", "cpu_count", "torch_version", "compute_device",
         "seeds", "deterministic_mode", "cudnn_deterministic", "cudnn_benchmark",
-        "cublas_workspace_config", "torch_num_threads", "git_commit", "git_dirty",
-        "packages", "dependency_lock_hash", "gpu_name", "cuda_version",
-        "cudnn_version", "precision", "allow_tf32", "allow_tf32_matmul",
-        "allow_tf32_cudnn",
+        "cublas_workspace_config", "torch_num_threads", "torch_interop_threads",
+        "git_commit", "git_dirty", "packages", "dependency_lock_hash", "gpu_name",
+        "cuda_version", "cudnn_version", "precision", "allow_tf32",
+        "allow_tf32_matmul", "allow_tf32_cudnn",
     ):
         assert key in p, f"필수 키 누락: {key}"
 
@@ -78,6 +78,20 @@ def test_dependency_lock_hash_from_subdirectory():
         )
     finally:
         os.chdir(original_cwd)
+
+
+def test_git_commit_from_subdirectory(monkeypatch):
+    """Git 해시 조회도 실행 디렉터리와 무관해야 한다."""
+    project_root = Path(__file__).resolve().parents[1]
+    expected = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    assert get_git_commit() == expected
 
 
 @pytest.fixture

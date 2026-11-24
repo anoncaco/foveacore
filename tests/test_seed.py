@@ -1,14 +1,27 @@
 """utils/seed.py 시드·GPU 결정론·TF32 차단 테스트 (T2)."""
 
-import pytest
+import random
 
+import numpy as np
+import pytest
+import torch
+
+from foveacore.core.exceptions import NumericalInstabilityError
 from foveacore.utils.seed import (
+    DEFAULT_SEEDS,
     SEED_NAMES,
     apply_seeds,
     assert_no_unstable_ops,
+    assert_reproducible,
+    create_rng,
+    detect_unstable_cuda_ops,
+    ensure_cublas_before_cuda,
     find_unstable_ops,
-    set_gpu_determinism,
+    get_rng,
+    gpu_determinism_status,
+    is_gpu_deterministic,
     set_cublas_workspace_config,
+    set_gpu_determinism,
     verify_cublas_workspace_config,
 )
 
@@ -25,29 +38,138 @@ def test_seed_names_are_the_five():
 
 def test_apply_seeds_returns_five_seed_keys():
     seeds = apply_seeds()
-    assert set(seeds.keys()) == set(SEED_NAMES)
+    assert set(seeds) == set(SEED_NAMES)
 
 
-def test_set_cublas_workspace_config():
+def test_partial_seed_override_is_reproducible():
+    overrides = {"episode_seed": 17}
+    first = apply_seeds(overrides)
+    assert first["episode_seed"] == 17
+    assert first["split_seed"] == DEFAULT_SEEDS["split_seed"]
+    first_values = [get_rng(name, "python").random() for name in SEED_NAMES]
+
+    apply_seeds(overrides)
+    second_values = [get_rng(name, "python").random() for name in SEED_NAMES]
+    assert first_values == second_values
+
+
+def test_independent_rngs_do_not_advance_each_other():
+    apply_seeds()
+    get_rng("split_seed", "python").random()
+    assert get_rng("episode_seed", "python").random() == random.Random(2001).random()
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (True, TypeError),
+        (-1, ValueError),
+        (1 << 64, ValueError),
+        ("1", TypeError),
+        (1.5, TypeError),
+    ],
+)
+def test_apply_seeds_rejects_invalid_values(value, error):
+    with pytest.raises(error):
+        apply_seeds({"model_seed": value})
+
+
+def test_apply_seeds_rejects_unknown_names_and_non_mapping():
+    with pytest.raises(ValueError, match="알 수 없는 시드"):
+        apply_seeds({"unknown_seed": 1})
+    with pytest.raises(TypeError, match="mapping"):
+        apply_seeds([1, 2, 3])
+
+
+def test_create_rng_supports_three_kinds():
+    assert isinstance(create_rng("python", 1), random.Random)
+    assert isinstance(create_rng("numpy", 1), np.random.Generator)
+    assert isinstance(create_rng("torch", 1), torch.Generator)
+    with pytest.raises(ValueError, match="RNG 종류"):
+        create_rng("other", 1)
+
+
+def test_get_rng_rejects_unknown_name_and_kind():
+    with pytest.raises(ValueError, match="시드 이름"):
+        get_rng("unknown")
+    with pytest.raises(ValueError, match="RNG 종류"):
+        get_rng("split_seed", "other")
+
+
+def test_set_cublas_workspace_config(monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
     assert set_cublas_workspace_config()
     assert verify_cublas_workspace_config()
 
 
-def test_set_gpu_determinism_flags():
-    import torch
+def test_ensure_cublas_sets_before_initialization(monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_initialized", lambda: False)
+    assert ensure_cublas_before_cuda()
+    assert verify_cublas_workspace_config()
 
+
+def test_ensure_cublas_rejects_change_after_initialization(monkeypatch):
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+    monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
+    with pytest.raises(RuntimeError, match="이미 초기화"):
+        ensure_cublas_before_cuda()
+
+
+def test_set_gpu_determinism_flags(monkeypatch):
+    calls = []
+    original = torch.use_deterministic_algorithms
+
+    def record(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(torch, "use_deterministic_algorithms", record)
     assert set_gpu_determinism() is True
-    assert torch.are_deterministic_algorithms_enabled() is True
-    assert torch.backends.cudnn.deterministic is True
-    assert torch.backends.cudnn.benchmark is False
+    assert calls[-1]["warn_only"] is False
+    assert all(gpu_determinism_status().values())
+    assert is_gpu_deterministic() is True
     assert torch.get_float32_matmul_precision() == "highest"
     assert torch.backends.cuda.matmul.allow_tf32 is False
     assert torch.backends.cudnn.allow_tf32 is False
 
 
-def test_unstable_ops_hook():
-    assert find_unstable_ops({"scatter_add"}) == ["scatter_add"]
-    assert find_unstable_ops({"other_op"}) == []
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("scatter_add", "scatter_add"),
+        ("aten::scatter_add_.default", "scatter_add"),
+        ("aten::grid_sampler_2d.default", "grid_sample"),
+        ("index_copy_", "index_copy"),
+        ("other_op", None),
+    ],
+)
+def test_unstable_ops_normalization(name, expected):
+    assert find_unstable_ops({name}) == ([] if expected is None else [expected])
+
+
+def test_unstable_ops_guard_allows_cpu_operations():
+    target = torch.zeros(3)
+    with detect_unstable_cuda_ops() as used_ops:
+        target.scatter_add_(0, torch.tensor([0, 2]), torch.tensor([1.0, 2.0]))
+    assert used_ops == set()
     assert_no_unstable_ops(set())
-    with pytest.raises(RuntimeError):
-        assert_no_unstable_ops({"grid_sample"})
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+def test_unstable_ops_guard_detects_cuda_grid_sample():
+    image = torch.zeros(1, 1, 4, 4, device="cuda")
+    grid = torch.zeros(1, 2, 2, 3, device="cuda")
+    with pytest.raises(RuntimeError, match="grid_sample"):
+        with detect_unstable_cuda_ops():
+            torch.nn.functional.grid_sample(image, grid, align_corners=False)
+
+
+def test_assert_reproducible_accepts_equal_results():
+    assert assert_reproducible(lambda x: x + 1, 2, repeats=3) == 3
+
+
+def test_assert_reproducible_rejects_changing_results():
+    values = iter([1, 2])
+    with pytest.raises(NumericalInstabilityError, match="결정론적"):
+        assert_reproducible(lambda: next(values))

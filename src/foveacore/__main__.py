@@ -23,7 +23,7 @@ from foveacore.data.splits import (
     validate_split_manifest,
 )
 from foveacore.forbidden_packages import assert_no_forbidden_packages
-from foveacore.utils.seed import DEFAULT_SEEDS
+from foveacore.utils.seed import DEFAULT_SEEDS, ensure_cublas_before_cuda
 
 
 def _validate_data_integrity(out_dir: Path) -> list[str]:
@@ -63,6 +63,12 @@ def _validate_data_integrity(out_dir: Path) -> list[str]:
 
 
 def main(argv=None) -> int:
+    try:
+        ensure_cublas_before_cuda()
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
     parser = argparse.ArgumentParser(prog="foveacore")
     sub = parser.add_subparsers(dest="command", required=True)
 

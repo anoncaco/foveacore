@@ -18,6 +18,11 @@ from foveacore.utils.seed import DEFAULT_SEEDS
 SCHEMA_VERSION = "1.0"
 
 
+def _project_root():
+    """실행 위치와 무관하게 저장소 루트를 계산한다."""
+    return Path(__file__).resolve().parents[3]
+
+
 def _torch():
     import torch
     return torch
@@ -62,7 +67,7 @@ def get_git_commit():
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, check=True,
+            cwd=_project_root(), capture_output=True, text=True, check=True,
         )
         return out.stdout.strip()
     except Exception:
@@ -72,7 +77,7 @@ def get_git_commit():
 def is_git_dirty():
     # git_dirty 기준(STATE.md): src/, configs/, locks/, pyproject.toml 내 수정·미추적(untracked) 파일 존재
     # 조회 실패는 clean(False)과 구분하기 위해 None 반환(T2-10).
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = _project_root()
     try:
         out = subprocess.run(
             [
@@ -100,7 +105,7 @@ def _dependency_lock_hash():
     """locks/phase0_requirements.lock 파일의 SHA-256 해시 반환.
     실행 위치와 무관하게 프로젝트 루트의 잠금 파일을 읽음.
     """
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = _project_root()
     lock_path = project_root / "locks" / "phase0_requirements.lock"
     if lock_path.exists():
         return hashlib.sha256(lock_path.read_bytes()).hexdigest()
@@ -121,10 +126,17 @@ def collect_provenance(seeds=None):
     else:
         compute_device = "cpu"
 
+    try:
+        torch_interop_threads = t.get_num_interop_threads()
+    except Exception:
+        torch_interop_threads = None
+
     p = {
         "schema_version": SCHEMA_VERSION,
         "os": platform.platform(),
         "hostname": socket.gethostname(),
+        "cpu": platform.processor() or platform.machine(),
+        "cpu_count": os.cpu_count(),
         "python_version": platform.python_version(),
         "torch_version": t.__version__,
         "compute_device": compute_device,
@@ -138,6 +150,7 @@ def collect_provenance(seeds=None):
         "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
         "mkl_num_threads": os.environ.get("MKL_NUM_THREADS"),
         "torch_num_threads": t.get_num_threads(),
+        "torch_interop_threads": torch_interop_threads,
         "git_commit": get_git_commit(),
         "git_dirty": is_git_dirty(),
         "packages": _collect_packages(),
