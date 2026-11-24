@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+import yaml
+
 from foveacore.config import load_phase0_config, validate_phase0_config
 from foveacore.data.mnist import (
     MNIST_FILES,
@@ -84,7 +86,11 @@ def main(argv=None) -> int:
         return 1
 
     if args.command == "validate":
-        cfg = load_phase0_config(args.config)
+        try:
+            cfg = load_phase0_config(args.config)
+        except yaml.YAMLError as exc:
+            print(f"ERROR: {args.config}: {exc}")
+            return 1
         errors = validate_phase0_config(cfg)
         if errors:
             for err in errors:
@@ -102,7 +108,11 @@ def main(argv=None) -> int:
     if args.command == "build-splits":
         cfg_path = Path(args.config)
         if cfg_path.exists():
-            cfg = load_phase0_config(cfg_path)
+            try:
+                cfg = load_phase0_config(cfg_path)
+            except yaml.YAMLError as exc:
+                print(f"ERROR: {cfg_path}: {exc}")
+                return 1
             errors = validate_phase0_config(cfg)
             if errors:
                 for err in errors:
