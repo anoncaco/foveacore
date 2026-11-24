@@ -125,6 +125,17 @@ def test_git_dirty_clean_repository(git_repo):
     assert is_git_dirty() is False
 
 
+def test_git_dirty_detects_untracked_when_status_config_disabled(git_repo):
+    """사용자 설정 status.showUntrackedFiles=no에서도 미추적 파일을 감지해야 한다."""
+    subprocess.run(
+        ["git", "config", "status.showUntrackedFiles", "no"],
+        cwd=git_repo,
+        check=True,
+    )
+    (git_repo / "configs" / "untracked_probe.yaml").write_text("probe: 1\n", encoding="utf-8")
+    assert is_git_dirty() is True
+
+
 def test_git_dirty_returns_none_outside_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(provenance, "__file__", str(tmp_path / "src" / "foveacore" / "utils" / "provenance.py"))
     assert is_git_dirty() is None

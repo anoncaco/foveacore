@@ -75,7 +75,10 @@ def is_git_dirty():
     project_root = Path(__file__).resolve().parents[3]
     try:
         out = subprocess.run(
-            ["git", "status", "--porcelain", "--", "src", "configs", "locks", "pyproject.toml"],
+            [
+                "git", "status", "--porcelain", "--untracked-files=all",
+                "--", "src", "configs", "locks", "pyproject.toml",
+            ],
             cwd=project_root, capture_output=True, text=True, check=True,
         )
         return bool(out.stdout.strip())

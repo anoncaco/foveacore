@@ -70,3 +70,30 @@ def test_forbidden_package_cli_error_is_clean(monkeypatch, capsys):
 
 def test_forbidden_package_guard_available():
     assert callable(assert_no_forbidden_packages)
+
+
+BROKEN_YAML = "sensor: [\n"
+
+
+def test_validate_reports_yaml_error_without_traceback(tmp_path, capsys):
+    path = tmp_path / "broken.yaml"
+    path.write_text(BROKEN_YAML, encoding="utf-8")
+    assert cli.main(["validate", "--config", str(path)]) == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "ERROR:" in captured.out
+    assert str(path) in captured.out
+    assert "Traceback" not in output
+
+
+def test_build_splits_reports_yaml_error_before_creating_out(tmp_path, capsys):
+    path = tmp_path / "broken.yaml"
+    path.write_text(BROKEN_YAML, encoding="utf-8")
+    out_dir = tmp_path / "must-not-be-created"
+    assert cli.main(["build-splits", "--config", str(path), "--out", str(out_dir)]) == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "ERROR:" in captured.out
+    assert str(path) in captured.out
+    assert "Traceback" not in output
+    assert not out_dir.exists()
