@@ -12,7 +12,7 @@ sensor:
   profile: F3
   grid_size: 5
   channels: 4
-
+  stroke_clue_available: true
 # 지속 학습 분할: [초기 support 10장], [개발 스트림], [본 실험 학습 스트림] ID 격리 (v1.9.3 Phase 0)
 datasets:
   mnist_train: 60000

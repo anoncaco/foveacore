@@ -30,6 +30,7 @@ def test_input_sensor_contract_registered():
         "profile": "F3",
         "grid_size": 5,
         "channels": 4,
+        "stroke_clue_available": True,
     }
 
 
@@ -96,7 +97,12 @@ def test_f3_profile_rejects_mismatched_contract(changes, field):
 def test_high_resolution_profile_is_separate():
     """고해상도 97x97은 F3가 아닌 별도 프로파일로만 허용한다."""
     cfg = _load_valid_config()
-    cfg["sensor"] = {"profile": "F3_HIRES", "grid_size": 97, "channels": 4}
+    cfg["sensor"] = {
+        "profile": "F3_HIRES",
+        "grid_size": 97,
+        "channels": 4,
+        "stroke_clue_available": True,
+    }
     assert validate_phase0_config(cfg) == []
 
 
@@ -112,3 +118,38 @@ def test_smoke_way_must_be_10():
     cfg["smoke"]["way"] = 5
     errors = validate_phase0_config(cfg)
     assert any("smoke.way" in error for error in errors)
+
+
+def test_stroke_clue_available_bool_accepted():
+    cfg = _load_valid_config()
+    assert validate_phase0_config(cfg) == []
+    assert cfg["sensor"]["stroke_clue_available"] is True
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None, []])
+def test_stroke_clue_available_invalid_type(value):
+    cfg = _load_valid_config()
+    cfg["sensor"]["stroke_clue_available"] = value
+    errors = validate_phase0_config(cfg)
+    assert any("stroke_clue_available" in error for error in errors)
+
+
+def test_stroke_clue_available_profile_mismatch():
+    cfg = _load_valid_config()
+    cfg["sensor"]["stroke_clue_available"] = False
+    errors = validate_phase0_config(cfg)
+    assert any("stroke_clue_available" in error for error in errors)
+
+
+def test_stroke_clue_available_missing():
+    cfg = _load_valid_config()
+    del cfg["sensor"]["stroke_clue_available"]
+    errors = validate_phase0_config(cfg)
+    assert any("sensor.stroke_clue_available" in error or "stroke_clue_available" in error for error in errors)
+
+
+def test_strict_1shot_3way_passes():
+    cfg = _load_valid_config()
+    cfg["datasets"]["support_per_episode"] = 3
+    cfg["smoke"]["way"] = 3
+    assert validate_phase0_config(cfg) == []
