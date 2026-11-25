@@ -383,3 +383,151 @@ def test_all_contracts_reject_schema_mismatch(obj):
     data["schema_version"] = "9.0"
     with pytest.raises(ValueError, match="schema_version"):
         type(obj).from_dict(data)
+
+
+def test_freeze_bytearray_and_memoryview_are_immutable_bytes():
+    source = bytearray(b"abc")
+    frozen = _freeze(source)
+    source[0] = 90
+    assert frozen == b"abc"
+    assert isinstance(frozen, bytes)
+
+    view = memoryview(b"xyz")
+    frozen_view = _freeze(view)
+    assert frozen_view == b"xyz"
+    assert isinstance(frozen_view, bytes)
+
+
+def test_freeze_set_and_frozenset_are_immutable_and_nested():
+    source = {1, (2, 3)}
+    frozen = _freeze(source)
+    source.add(99)
+    assert isinstance(frozen, frozenset)
+    assert frozen == frozenset({1, (2, 3)})
+
+    nested = frozenset({frozenset({1, 2}), 3})
+    frozen_nested = _freeze(nested)
+    assert frozen_nested == frozenset({frozenset({1, 2}), 3})
+
+
+def test_bytes_and_set_json_roundtrip():
+    import json
+
+    from foveacore.core.contracts import Memory
+
+    obj = Memory(
+        concept_record=bytearray(b"abc"),
+        evidence_links={1, 2},
+    )
+    data = obj.to_dict()
+    payload = json.dumps(data, allow_nan=False)
+    restored = Memory.from_dict(json.loads(payload))
+    assert restored.to_dict() == data
+    assert restored.concept_record == b"abc"
+    assert restored.evidence_links == frozenset({1, 2})
+
+
+def test_immutable_ndarray_blocks_shape_strides_dtype_data_setflags():
+    arr = _immutable_ndarray(np.array([1, 2, 3, 4], dtype=np.float64).reshape(2, 2))
+    shape_before = arr.shape
+
+    for name, value in (
+        ("shape", (4,)),
+        ("strides", (8, 8)),
+        ("dtype", np.float32),
+        ("data", b"\x00"),
+    ):
+        with pytest.raises((AttributeError, ValueError)):
+            setattr(arr, name, value)
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        arr.setflags(write=True)
+
+    assert arr.shape == shape_before
+    assert not arr.flags.writeable
+
+
+def test_structure_embedding_shape_cannot_be_changed():
+    arr = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float64).reshape(2, 2)
+    struct = Structure(embedding=arr)
+    shape_before = struct.embedding.shape
+
+    with pytest.raises((AttributeError, ValueError)):
+        struct.embedding.shape = (4,)
+    assert struct.embedding.shape == shape_before
+
+
+def test_numpy_coordinate_roundtrip_preserves_value_and_immutability():
+    import json
+    import numpy as np
+
+    from foveacore.core.contracts import Observation, make_image_provenance
+
+    provenance = make_image_provenance(
+        original_hw=(2, 2),
+        processed_hw=(2, 2),
+        preprocess_profile_id="x",
+        sensor_profile="F3",
+        grid_size=5,
+    )
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        location={"center": np.array([0.5, 0.25], dtype="float64")},
+        provenance=provenance,
+    )
+    data = obs.to_dict()
+    payload = json.dumps(data, allow_nan=False)
+    restored = Observation.from_dict(json.loads(payload))
+    assert restored.to_dict() == data
+    assert restored.location["center"].tolist() == [0.5, 0.25]
+    assert not restored.location["center"].flags.writeable
+
+
+def test_top_level_numpy_coordinate_roundtrip():
+    import json
+    import numpy as np
+
+    from foveacore.core.contracts import Observation, make_image_provenance
+
+    provenance = make_image_provenance(
+        original_hw=(2, 2),
+        processed_hw=(2, 2),
+        preprocess_profile_id="x",
+        sensor_profile="F3",
+        grid_size=5,
+    )
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        location=np.array([0.25, 0.75], dtype="float64"),
+        provenance=provenance,
+    )
+    data = obs.to_dict()
+    restored = Observation.from_dict(json.loads(json.dumps(data)))
+    assert restored.to_dict() == data
+    assert restored.location.tolist() == [0.25, 0.75]
+
+
+def test_out_of_range_numpy_coordinate_rejected_on_restore():
+    import json
+    import numpy as np
+
+    from foveacore.core.contracts import Observation, make_image_provenance
+
+    provenance = make_image_provenance(
+        original_hw=(2, 2),
+        processed_hw=(2, 2),
+        preprocess_profile_id="x",
+        sensor_profile="F3",
+        grid_size=5,
+    )
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        location={"center": np.array([0.5, 0.25], dtype="float64")},
+        provenance=provenance,
+    )
+    data = obs.to_dict()
+    data["location"] = {"center": {"__numpy__": [1.1, 0.25], "dtype": "float64"}}
+    with pytest.raises(ValueError, match="좌표"):
+        Observation.from_dict(json.loads(json.dumps(data)))

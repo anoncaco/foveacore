@@ -193,16 +193,38 @@ def validate_unit_coordinates(value, name="location"):
     raise ValueError(f"{name} 좌표는 숫자 또는 중첩 시퀀스여야 합니다: {value!r}")
 
 
+class _ImmutableNdarray(np.ndarray):
+    """bytes-backed read-only ndarray whose shape/strides/dtype/data cannot be reassigned."""
+
+    def __setattr__(self, name, value):
+        if name in {"shape", "strides", "dtype", "data"}:
+            raise AttributeError(f"{name}는 불변 ndarray에서 재할당할 수 없습니다(T2).")
+        super().__setattr__(name, value)
+
+    def setflags(self, *args, **kwargs):
+        write = kwargs.get("write", None)
+        if write is None and len(args) > 0:
+            write = args[0]
+        if write is True:
+            raise ValueError("WRITEABLE flag cannot be set to True(T2).")
+        return super().setflags(*args, **kwargs)
+
+
 def _immutable_ndarray(value):
     """숫자 배열을 불변 bytes 버퍼로 복사해 쓰기 재활성화를 차단한다."""
     if value.dtype.hasobject:
         raise TypeError("object dtype 배열은 지원하지 않습니다(T2).")
-    return np.frombuffer(value.tobytes(order="C"), dtype=value.dtype).reshape(value.shape)
+    arr = np.frombuffer(value.tobytes(order="C"), dtype=value.dtype).reshape(value.shape)
+    return arr.view(_ImmutableNdarray)
 
 
 def _freeze(obj):
     """내부 데이터를 방어 복사하고 불변 형태로 변환한다."""
     if isinstance(obj, Mapping):
+        if "__bytes__" in obj and set(obj) <= {"__bytes__"}:
+            return bytes.fromhex(obj["__bytes__"])
+        if "__set__" in obj and set(obj) <= {"__set__"}:
+            return frozenset(_freeze(v) for v in obj["__set__"])
         if "__numpy__" in obj and set(obj) <= {"__numpy__", "dtype"}:
             arr = np.array(obj["__numpy__"], dtype=obj.get("dtype"))
             return _immutable_ndarray(arr)
@@ -211,10 +233,16 @@ def _freeze(obj):
         return MappingProxyType({k: _freeze(v) for k, v in obj.items()})
     if isinstance(obj, (list, tuple)):
         return tuple(_freeze(v) for v in obj)
+    if isinstance(obj, (set, frozenset)):
+        return frozenset(_freeze(v) for v in obj)
     if isinstance(obj, np.ndarray):
         return _immutable_ndarray(obj)
     if isinstance(obj, torch.Tensor):
         return ImmutableTensor(obj)
+    if isinstance(obj, (bytearray, memoryview)):
+        return bytes(obj)
+    if isinstance(obj, bytes):
+        return obj
     if isinstance(obj, _SerializableContract):
         return obj
     return obj
@@ -228,6 +256,10 @@ def _to_plain(obj):
         return [_to_plain(v) for v in obj]
     if isinstance(obj, np.ndarray):
         return {"__numpy__": obj.tolist(), "dtype": str(obj.dtype)}
+    if isinstance(obj, (set, frozenset)):
+        return {"__set__": [_to_plain(v) for v in obj]}
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        return {"__bytes__": bytes(obj).hex()}
     if isinstance(obj, np.generic):
         return obj.item()
     if isinstance(obj, ImmutableTensor):
@@ -352,14 +384,13 @@ class Observation(_SerializableContract):
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence는 [0, 1] 범위여야 합니다.")
         _validate_nonnegative_cost(self.cost, "cost")
-        if self.modality.lower() in _IMAGE_MODALITIES:
-            validate_image_provenance(self.provenance)
-            validate_unit_coordinates(self.location)
         object.__setattr__(self, "location", _freeze(self.location))
         object.__setattr__(self, "features", _freeze(self.features))
         object.__setattr__(self, "observed_mask", _freeze(self.observed_mask))
         object.__setattr__(self, "provenance", _freeze(self.provenance))
         if self.modality.lower() in _IMAGE_MODALITIES:
+            validate_image_provenance(self.provenance)
+            validate_unit_coordinates(self.location)
             _validate_image_features(self.features, self.provenance["sensor_profile"])
 
 

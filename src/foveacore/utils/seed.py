@@ -113,10 +113,18 @@ def set_gpu_determinism(model_seed=None):
     prev_initialized = _GPU_RUNTIME_INITIALIZED
     import torch
     torch_rng_state = torch.get_rng_state().clone()
-    cuda_rng_states = (
-        torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
-    )
     cuda_was_initialized = torch.cuda.is_initialized()
+    cuda_rng_states = (
+        torch.cuda.get_rng_state_all() if cuda_was_initialized else None
+    )
+
+    prev_deterministic = torch.are_deterministic_algorithms_enabled()
+    prev_warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    prev_cudnn_deterministic = torch.backends.cudnn.deterministic
+    prev_cudnn_benchmark = torch.backends.cudnn.benchmark
+    prev_matmul_precision = torch.get_float32_matmul_precision()
+    prev_matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    prev_cudnn_tf32 = torch.backends.cudnn.allow_tf32
 
     def _restore_rng_state():
         try:
@@ -129,6 +137,27 @@ def set_gpu_determinism(model_seed=None):
             except Exception:
                 pass
 
+    def _restore_global_state():
+        try:
+            torch.use_deterministic_algorithms(
+                prev_deterministic, warn_only=prev_warn_only
+            )
+        except Exception:
+            pass
+        try:
+            torch.backends.cudnn.deterministic = prev_cudnn_deterministic
+            torch.backends.cudnn.benchmark = prev_cudnn_benchmark
+            torch.set_float32_matmul_precision(prev_matmul_precision)
+            torch.backends.cuda.matmul.allow_tf32 = prev_matmul_tf32
+            torch.backends.cudnn.allow_tf32 = prev_cudnn_tf32
+        except Exception:
+            pass
+
+    def _restore_all():
+        _restore_rng_state()
+        _restore_global_state()
+        _GPU_RUNTIME_INITIALIZED = prev_initialized
+
     try:
         torch.use_deterministic_algorithms(True, warn_only=False)
         torch.backends.cudnn.deterministic = True
@@ -140,20 +169,20 @@ def set_gpu_determinism(model_seed=None):
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed_value)
     except Exception as exc:
-        _restore_rng_state()
-        _GPU_RUNTIME_INITIALIZED = prev_initialized
+        _restore_all()
         raise RuntimeError(f"GPU 결정론 설정 실패(T2): {exc}") from exc
 
     status = gpu_determinism_status()
     failed = [name for name, value in status.items() if value is not True]
     if failed:
-        _restore_rng_state()
-        _GPU_RUNTIME_INITIALIZED = prev_initialized
+        _restore_all()
         raise RuntimeError(f"GPU 결정론 적용 검증 실패(T2): {failed}")
 
     global _APPLIED_SEEDS
     _APPLIED_SEEDS = dict(_APPLIED_SEEDS)
     _APPLIED_SEEDS["model_seed"] = seed_value
+    for kind in _SUPPORTED_RNG_KINDS:
+        _INDEPENDENT_RNGS[("model_seed", kind)] = create_rng(kind, seed_value)
     _GPU_RUNTIME_INITIALIZED = True
     return True
 
@@ -317,7 +346,7 @@ def get_rng(name, kind="python"):
         raise ValueError(f"지원하지 않는 RNG 종류: {kind}")
     key = (name, kind)
     if key not in _INDEPENDENT_RNGS:
-        _INDEPENDENT_RNGS[key] = create_rng(kind, DEFAULT_SEEDS[name])
+        _INDEPENDENT_RNGS[key] = create_rng(kind, _APPLIED_SEEDS[name])
     return _INDEPENDENT_RNGS[key]
 
 

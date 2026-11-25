@@ -219,12 +219,19 @@ def test_unstable_ops_guard_detects_cuda_grid_sample():
         from foveacore.utils.seed import detect_unstable_cuda_ops
 
         image = torch.zeros(1, 1, 4, 4, device="cuda")
-        grid = torch.zeros(1, 2, 2, 3, device="cuda")
+        grid = torch.zeros(1, 2, 2, 2, device="cuda")
+        outside = torch.nn.functional.grid_sample(image, grid, align_corners=False)
+        assert tuple(outside.shape) == (1, 1, 2, 2)
+
+        used_ops = set()
         try:
-            with detect_unstable_cuda_ops():
+            with detect_unstable_cuda_ops() as used_ops:
                 torch.nn.functional.grid_sample(image, grid, align_corners=False)
         except RuntimeError as exc:
+            assert "비결정론 CUDA 연산 사용 금지" in str(exc), exc
             assert "grid_sample" in str(exc), exc
+            assert "expected grid" not in str(exc).lower(), exc
+            assert used_ops == {"grid_sample"}, used_ops
         else:
             raise AssertionError("비결정론 CUDA 연산이 감지되지 않았습니다.")
         """
@@ -377,3 +384,223 @@ def test_warn_only_true_makes_ensure_gpu_runtime_fail():
     with pytest.raises(RuntimeError) as exc:
         ensure_gpu_runtime_initialized()
     assert "warn_only" in str(exc.value)
+
+
+def test_get_rng_cache_uses_current_applied_model_seed():
+    apply_seeds({"model_seed": 88})
+    rng = get_rng("model_seed", "python")
+    assert rng.getstate() == create_rng("python", 88).getstate()
+
+
+def test_initialize_resets_cached_model_rngs_all_kinds():
+    kinds = ("python", "numpy", "torch")
+    for kind in kinds:
+        get_rng("model_seed", kind)
+    non_model_state = get_rng("split_seed", "python").getstate()
+
+    initialize_gpu_runtime(88)
+
+    for kind in kinds:
+        rng = get_rng("model_seed", kind)
+        fresh = create_rng(kind, 88)
+        if kind == "python":
+            assert rng.getstate() == fresh.getstate()
+        elif kind == "numpy":
+            assert rng.bit_generator.state == fresh.bit_generator.state
+        else:
+            assert rng.get_state().equal(fresh.get_state())
+    assert get_rng("split_seed", "python").getstate() == non_model_state
+
+
+def test_initialize_creates_model_rngs_with_seed_when_absent():
+    from foveacore.utils import seed as seed_utils
+
+    seed_utils._INDEPENDENT_RNGS.pop(("model_seed", "python"), None)
+    seed_utils._INDEPENDENT_RNGS.pop(("model_seed", "numpy"), None)
+    seed_utils._INDEPENDENT_RNGS.pop(("model_seed", "torch"), None)
+
+    initialize_gpu_runtime(88)
+
+    for kind in ("python", "numpy", "torch"):
+        rng = get_rng("model_seed", kind)
+        fresh = create_rng(kind, 88)
+        if kind == "python":
+            assert rng.getstate() == fresh.getstate()
+        elif kind == "numpy":
+            assert rng.bit_generator.state == fresh.bit_generator.state
+        else:
+            assert rng.get_state().equal(fresh.get_state())
+
+
+def test_initialize_with_applied_model_seed_resets_independent_rng():
+    apply_seeds({"model_seed": 88})
+    get_rng("model_seed", "python").random()
+    initialize_gpu_runtime()
+    assert get_rng("model_seed", "python").getstate() == create_rng("python", 88).getstate()
+
+
+def test_failed_initialization_does_not_change_model_rng_state(monkeypatch):
+    import copy
+
+    apply_seeds({"model_seed": 7})
+    states = {}
+    for kind in ("python", "numpy", "torch"):
+        rng = get_rng("model_seed", kind)
+        if kind == "python":
+            states[kind] = rng.getstate()
+        elif kind == "numpy":
+            states[kind] = copy.deepcopy(rng.bit_generator.state)
+        else:
+            states[kind] = rng.get_state().clone()
+
+    monkeypatch.setattr(
+        "foveacore.utils.seed.gpu_determinism_status", lambda: {"x": False}
+    )
+    with pytest.raises(RuntimeError):
+        initialize_gpu_runtime(99)
+
+    for kind in ("python", "numpy", "torch"):
+        rng = get_rng("model_seed", kind)
+        if kind == "python":
+            assert rng.getstate() == states[kind]
+        elif kind == "numpy":
+            assert rng.bit_generator.state == states[kind]
+        else:
+            assert rng.get_state().equal(states[kind])
+
+
+def test_cuda_rng_backup_not_called_when_uninitialized(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr("foveacore.utils.seed.ensure_cublas_before_cuda", lambda: True)
+    monkeypatch.setattr("foveacore.utils.seed.gpu_determinism_status", lambda: {"ok": True})
+    monkeypatch.setattr(torch, "manual_seed", lambda value: None)
+    monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda value: None)
+    monkeypatch.setattr(torch.cuda, "is_initialized", lambda: (calls.append("init"), False)[1])
+    monkeypatch.setattr(torch.cuda, "get_rng_state_all", lambda: (calls.append("backup"), [])[1])
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    set_gpu_determinism()
+
+    assert "backup" not in calls
+    assert calls == ["init"]
+
+
+def test_cuda_rng_backup_called_after_initialized_check(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr("foveacore.utils.seed.ensure_cublas_before_cuda", lambda: True)
+    monkeypatch.setattr("foveacore.utils.seed.gpu_determinism_status", lambda: {"ok": True})
+    monkeypatch.setattr(torch, "manual_seed", lambda value: None)
+    monkeypatch.setattr(torch.cuda, "manual_seed_all", lambda value: None)
+
+    def record_init():
+        calls.append("init")
+        return True
+
+    def record_backup():
+        calls.append("backup")
+        return []
+
+    monkeypatch.setattr(torch.cuda, "is_initialized", record_init)
+    monkeypatch.setattr(torch.cuda, "get_rng_state_all", record_backup)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    set_gpu_determinism()
+
+    assert calls == ["init", "backup"]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+def test_cuda_rng_backup_not_called_in_fresh_process():
+    result = _run_cuda_script(
+        """
+        import torch
+
+        calls = {"count": 0}
+        original = torch.cuda.get_rng_state_all
+
+        def counted(*args, **kwargs):
+            calls["count"] += 1
+            return original(*args, **kwargs)
+
+        torch.cuda.get_rng_state_all = counted
+        from foveacore.utils.seed import set_gpu_determinism
+
+        set_gpu_determinism()
+        assert calls["count"] == 0, calls["count"]
+        print("CUDA BACKUP CALL COUNT:", calls["count"])
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_settings_rollback_on_status_failure(monkeypatch):
+    import copy
+
+    from foveacore.utils import seed as seed_utils
+
+    torch.use_deterministic_algorithms(False, warn_only=True)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.manual_seed(123)
+    apply_seeds({"model_seed": 7})
+    rng_before = torch.get_rng_state().clone()
+    model_rng_before = get_rng("model_seed", "python").getstate()
+    applied_before = get_applied_seeds()
+    flag_before = seed_utils._GPU_RUNTIME_INITIALIZED
+
+    monkeypatch.setattr("foveacore.utils.seed.gpu_determinism_status", lambda: {"x": False})
+    with pytest.raises(RuntimeError):
+        initialize_gpu_runtime(99)
+
+    assert torch.are_deterministic_algorithms_enabled() is False
+    assert torch.is_deterministic_algorithms_warn_only_enabled() is True
+    assert torch.backends.cudnn.deterministic is False
+    assert torch.backends.cudnn.benchmark is True
+    assert torch.get_float32_matmul_precision() == "high"
+    assert torch.backends.cuda.matmul.allow_tf32 is True
+    assert torch.backends.cudnn.allow_tf32 is True
+    assert torch.equal(torch.get_rng_state(), rng_before)
+    assert get_rng("model_seed", "python").getstate() == model_rng_before
+    assert get_applied_seeds() == applied_before
+    assert seed_utils._GPU_RUNTIME_INITIALIZED == flag_before
+
+
+def test_settings_rollback_on_apply_exception(monkeypatch):
+    from foveacore.utils import seed as seed_utils
+
+    torch.use_deterministic_algorithms(False, warn_only=True)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.manual_seed(123)
+    apply_seeds({"model_seed": 7})
+    rng_before = torch.get_rng_state().clone()
+    model_rng_before = get_rng("model_seed", "python").getstate()
+    applied_before = get_applied_seeds()
+    flag_before = seed_utils._GPU_RUNTIME_INITIALIZED
+
+    def raise_boom(value):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(torch, "manual_seed", raise_boom)
+    with pytest.raises(RuntimeError):
+        initialize_gpu_runtime(99)
+
+    assert torch.are_deterministic_algorithms_enabled() is False
+    assert torch.is_deterministic_algorithms_warn_only_enabled() is True
+    assert torch.backends.cudnn.deterministic is False
+    assert torch.backends.cudnn.benchmark is True
+    assert torch.get_float32_matmul_precision() == "high"
+    assert torch.backends.cuda.matmul.allow_tf32 is True
+    assert torch.backends.cudnn.allow_tf32 is True
+    assert torch.equal(torch.get_rng_state(), rng_before)
+    assert get_rng("model_seed", "python").getstate() == model_rng_before
+    assert get_applied_seeds() == applied_before
+    assert seed_utils._GPU_RUNTIME_INITIALIZED == flag_before
