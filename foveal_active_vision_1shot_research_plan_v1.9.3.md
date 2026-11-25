@@ -205,6 +205,7 @@ flowchart TD
 #### 4. 공통 이미지 입력·전처리 계약 (Phase 1 센서 구현에 앞선 규격 확정)
 
 - **임의 해상도:** 센서 입력은 고정 `28×28`이 아닌 2D 흑백 이미지 `(H,W)`(`H,W ≥ 1`)를 수용합니다. 고정되는 것은 센서가 반환하는 관측 격자(`5×5×4`, 후속 고해상도 별도 프로파일 `97×97×4`)이며, 원본 이미지 전체를 인지 코어나 비교군에 직접 제공한다는 뜻이 아닙니다. MNIST `28×28`과 Phase 7 `56×56` 공식 평가 입력은 그대로 유지합니다.
+- **손글씨 전용 단서 분리:** 원본 규격·관측 창·이동 보폭·채널 의미는 센서 프로파일이 정의합니다. `2px/6px` 이동 보폭과 `estimated_stroke_density`(획 단서 밀도 추정치)는 **현재 손글씨 프로파일**(MNIST/손글씨 중심 실험)의 설정으로 명시하며, 획 단서를 제공하지 않는 프로파일에서도 미관측 영역과 중복도만으로 다음 시선을 선택할 수 있게 합니다. 즉 `estimated_stroke_density`는 공통 시선 정책의 필수 입력이 아니며, 프로파일 메타데이터에 `stroke_clue_available: true/false`로 선언합니다.
 - **긴 변 상한·종횡비 유지:** `L=max(H,W)`, `max_side=1024`. `L≤1024`이면 업스케일·강제 정사각 리사이즈 없이 원본 크기 그대로 사용합니다. `L>1024`이면 `scale=1024/L`, `(H',W')=(max(1,round(H·scale)), max(1,round(W·scale)))`로 **축소만** 수행합니다. `AdaptiveAvgPool2d((H',W'))` 등 면적 기반 평균 축소를 사용하고, 반올림으로 발생하는 경미한 비율 오차를 기록합니다. 예: `4096×3072→1024×768`, `3072×4096→768×1024`, `1920×1080→1024×576`.
 - **좌표계:** 시선 중심 `(x,y)`는 전처리 후 `(H',W')`의 픽셀 중심 기준 `[0,1]` 좌표로 관리합니다(각 축 길이가 1이면 중앙 `0.5`). 레거시 `[-1,1]` 및 픽셀 좌표는 동일한 점으로 변환해 함께 기록합니다. 예컨대 `grid_sample(align_corners=False)`용 좌표는 `x_grid=2(x_px+0.5)/W'−1`, `y_grid=2(y_px+0.5)/H'−1`이며 짝수 크기 중심 반픽셀 정책을 유지합니다.
 - **프로파일/감사:** `original_hw`, `processed_hw`, `max_side`, `resize_method`, `preprocess_profile_id`, 좌표·정밀도·시드 및 원본/처리 이미지 해시를 기록합니다. 축소 전 원본은 센서 이외의 추론 구성 요소가 참조하지 않습니다. 기존 `B0/B1`의 MNIST 28×28 전처리·정확도 계약은 변경하지 않습니다.
@@ -267,6 +268,7 @@ flowchart TD
   1. **전체 이미지 면적 관측률:** 전체 캔버스 대비 누적 시야 합집합 비율
   2. **실제 획(foreground stroke) 면적 관측률:** 사후 분석 시 유효 획 픽셀 중 시야/중심와에 들어온 비율
   3. **고해상도(`5×5` 중심와) 관측 면적 비율:** 실제 고해상도로 본 면적 및 획 비율
+- **실제 획 관측률의 추론 입력 배제:** 사후 분석용 실제 획 관측률(지표 2)은 추론이나 Stop의 입력으로 들어가지 않습니다. 시선 정책은 센서 프로파일이 정의하는 원본 규격·관측 창·이동 보폭·채널 의미와 미관측 영역·중복도만 사용하며, `estimated_stroke_density`는 손글씨 프로파일에만 선택적으로 적용됩니다(항목 1).
 - **천장 효과 대비:** `28×28 + F3`에서의 초기 외곽 시야 포화 가능성을 분리 검증하기 위해 **F1/F2 센서 비교**와 **Phase 7의 `56×56` 이동·가림 환경**을 병행 평가합니다. 외곽 `21×21` 대안은 `F3-21` 감도 실험으로 구분합니다.
 - **비용 지표 6종:** glimpse 수, 원본 접근 면적 합/합집합, 고해상도 관측 면적, 전송 스칼라 수(마스크 포함/제외), 실제 FLOPs/MACs·지연, 후보 행동 평가 비용.
 
@@ -288,7 +290,7 @@ flowchart TD
 
 ## Phase 2 — 시선 이동과 순차 관측 통합
 
-> 💡 **쉽게 말하면:** 눈이 최대 10번까지 시선을 옮겨 다니며 탐색하고, 본 조각들을 **합성 시퀀스로 사전 학습한 2층 GRU 메모리에 순서대로 통합하는 단계**입니다. (목표 2주)
+> 💡 **쉽게 말하면:** 눈이 적응형 Stop 규칙에 따라 시선을 옮겨 다니며 탐색하고, 본 조각들을 **합성 시퀀스로 사전 학습한 2층 GRU 메모리에 순서대로 통합하는 단계**입니다. (목표 2주)
 
 ### 구현 명세
 
@@ -297,17 +299,17 @@ flowchart TD
 - **행동 공간 (17개):** 8방향 × 2보폭(`2px`, `6px`) + `Stop`. 대각선 정규화, 좌표 clip 후 정지/중복 방문 행동 마스킹.
 - **정책군:** `Random`, `Fixed`, `Active-coverage`(Phase 2), `Active-EIG`(Phase 4), `Oracle`(상한 참고용).
 - **Active-coverage 행동 점수 계산식:** 후보 행동 $a$가 이동할 창에 대해, **오직 이미 관측된 주변부 및 누적 관측 마스크 $U_{t-1}$ 정보만을 이용해** 점수를 계산합니다(미관측 원본 픽셀 직접 조회 금지).
-  $$\text{score}_{\text{cov}}(a) = w_u \cdot \text{unobserved\_ratio}(a \mid U_{t-1}) + w_s \cdot \text{estimated\_stroke\_density}(a \mid O_{1..t-1}) - w_o \cdot \text{fovea\_overlap}(a \mid U_{t-1}^{\text{fovea}})$$
+  $$\text{score}_{\text{cov}}(a) = w_u \cdot \text{unobserved\_ratio}(a \mid U_{t-1}) - w_o \cdot \text{fovea\_overlap}(a \mid U_{t-1}^{\text{fovea}})$$
   - `unobserved_ratio`: 아직 보지 않은 영역을 새로 덮는 비율
-  - `estimated_stroke_density`: 직전까지 저해상도 주변부 등에서 관측된 획 흔적이 후보 위치 근처로 이어질 가능성(관측 이력 기반 추정치)
   - `fovea_overlap`: 이미 고해상도 `5×5`로 본 영역과의 중복 페널티
-- **예산:** 초기 3회 자유 탐색, 최소 3회, 기본 최대 10회(예산 곡선 `1, 2, 3, 5, 8, 10, 15회`, 고정 예산 시 Stop 비활성화).
+  - `estimated_stroke_density`(획 단서 밀도 추정치)는 **손글씨 프로파일에 한해 선택적으로 추가**할 수 있으며, 이 경우 위 식에 $+ w_s \cdot \text{estimated\_stroke\_density}(a \mid O_{1..t-1})$ 항을 더합니다. 획 단서를 제공하지 않는 프로파일에서는 해당 항을 생략하고 미관측 영역·중복도만으로 다음 시선을 선택합니다. 프로파일 메타데이터에 `stroke_clue_available: true/false`로 선언합니다.
+- **예산:** 최소 3회, 기본 최대 10회(예산 곡선 `1, 2, 3, 5, 8, 10, 15회`, 고정 예산 시 Stop 비활성화). 최초 관측 후 즉시 판정하는 적응형 Stop은 Phase 4 정지 규칙을 따릅니다(항목 5).
 
 #### 2. Temporal Aggregator (2층 GRU) 및 사전 학습 명세
 
 - **구조:** `2층 GRU (hidden=128)` (Causal Transformer는 Stage 2 대안). 입력: **4채널 센서 관측**(`[B,4,5,5]` → 입력 투영 → 패치 임베딩 $e_t$), 절대 좌표 $p_t$, 변위 $\Delta p_t$, 유효 마스크. F1~F4 비교에서도 투영 계층의 입력 계약은 동일하게 유지합니다. `2px/6px` 보폭은 레거시 `28×28` 기준이며, 고해상도 신규 프로파일에서는 처리 캔버스와 창 크기에 맞는 별도 보폭/관측 예산을 설정·검증합니다.
 - **GRU 사전 학습 데이터·목적함수·종료 조건:**
-  - **사전 학습 데이터:** Phase 1 합성 선·곡선·그래프 이미지에서 Fixed/Random/Active-coverage 경로로 추출한 순차 관측 시퀀스(스텝 $1\sim 10$).
+  - **사전 학습 데이터:** Phase 1 합성 선·곡선·그래프 이미지에서 Fixed/Random/Active-coverage 경로로 추출한 순차 관측 시퀀스(GRU 사전학습 시퀀스 길이 $1\sim 10$; 추론 시 고정 스텝 수는 아님).
   - **목적함수:** 매 스텝 은닉 상태 $h_t$로부터 (1) 현재까지 관측된 기하 속성 예측 손실 $L_{\text{geom}}(h_t)$와 (2) 다음 관측 기초 특징 예측 손실 $L_{\text{feat}}(h_t, a_{t+1})$의 가중 합을 최소화(Phase 3 구조·스타일 분리나 Phase 4 조건부 `W`에 선행 의존하지 않음).
   - **학습 종료 조건:** 합성 dev 분할(15%) validation loss 기준 early stopping(`patience` 고정, 예: 10 epoch) 또는 사전 등록된 최대 epoch 상한 도달 시 종료.
 - **비교 대안:** 순서 불변 `permutation-invariant pooling`(좌표 유지).
@@ -335,6 +337,7 @@ flowchart TD
 - **센서 채널 계약 상속:** Phase 2가 생성한 **4채널 관측(마스크 포함)**을 동일한 입력 투영기로 받아 구조/스타일을 분리합니다. 마스크를 원본 획 특징처럼 해석하지 않도록 입력 채널·프로파일 버전을 고정합니다. `97×97×4`는 Phase 7 이후 별도 확장 실험이며 이 단계의 기존 5×5 체크포인트와 혼용하지 않습니다.
 - **잠재 벡터:** 구조 `z_struct`(64차원) + 스타일 `z_style`(16차원).
 - **해석 가능한 구조 head $g$:** 방향 히스토그램, 곡률, 끝점, 분기·교차, 폐곡선, 상대 위치 및 **관측 가능성 마스크 $m$** 반환.
+- **구조 속성 정의·순서·버전:** 구조 속성 벡터의 각 차원이 의미하는 속성(예: 방향 비율, 곡률, 끝점 수)의 **정의와 순서**, 그리고 속성 추출 코드의 **버전**을 구조 head 출력과 DAS 기억에 함께 연결합니다. 두 DAS를 비교할 때는 속성 정의·순서·버전이 호환되고, 양쪽 관측 마스크가 유효한 항목만 비교 대상으로 삼습니다. 공통 비교 항목이 없으면 기존 `insufficient_structural_evidence` 규칙을 적용합니다.
 - **클래스 내 비아핀 변형 고려:** 닫힌 `4` vs 열린 `4`, 가로획 유무 `7` 등 위상 변형을 고려해 Phase 3(1-shot)은 비숫자 손글씨 dev 분할로 허용치(`r_c`, `Σ0`)를 보정하며, 복수 하위 프로토타입 분기는 Phase 5 선택 실험으로 분리합니다.
 - **사전 학습 손실:**
   ```text
@@ -348,12 +351,13 @@ flowchart TD
 ```text
 DAS_c = { prototype μ_c, geometry g_c, observed_mask m_c,
           reliability r_c, shared_prior_variance Σ0,
-          discriminative_weights w_c, provenance }
+          discriminative_weights w_c, provenance, concept_id }
 ```
 
+- **후보 집합 C:** 현재 가설 공간의 모든 개념을 후보 집합 $C$로 정의합니다. MNIST 공식 실험에서는 $|C|=10$이고, 각 개념은 `concept_id`(예: `"0"`, `"1"`, ..., `"9"`)로 식별합니다. Phase 8 이후 신규 개념 추가 시 $C$가 변경될 수 있습니다(항목 9 인계 확인 참조).
 - **2단계 초기 구축 절차 (순서 고정):**
-  1. **1단계 (개별 인코딩):** 클래스 $c \in \{0,\dots,9\}$별 지원 예시 **1장씩(총 10장)**을 동결 인코더에 통과시켜 10개의 기초 DAS(`μ_c, g_c, m_c, r_c`)를 **모두 먼저 구축**합니다.
-  2. **2단계 (상호 변별 가중치 산출):** 10개가 모두 준비된 후 각 클래스 $c$를 **나머지 9개 클래스($j \neq c$) 전체와 비교**해 차원별 분리도와 구조 단서 신뢰도를 반영한 `w_c`를 계산합니다(상한·수축 적용으로 단일 샘플 과적합 방지).
+  1. **1단계 (개별 인코딩):** 후보 집합 $C$의 모든 개념 $c \in C$별 지원 예시 **1장씩(총 $|C|$장; MNIST는 10장)**을 동결 인코더에 통과시켜 $|C|$개의 기초 DAS(`μ_c, g_c, m_c, r_c`, `concept_id=c`)를 **모두 먼저 구축**합니다.
+  2. **2단계 (상호 변별 가중치 산출):** 모든 개념이 준비된 후 각 개념 $c \in C$를 **$C$의 다른 모든 개념($j \in C, j \neq c$)과 비교**해 차원별 분리도와 구조 단서 신뢰도를 반영한 `w_c`를 계산합니다(상한·수축 적용으로 단일 샘플 과적합 방지).
 - **`Σ0` 기본값:** 사전 학습(`P1/P2/P3`)이 있는 경우 사전 학습 검증 데이터의 공통 대각 분산을 사용하며, **사전 학습이 없는 `P0`에서는 단위행렬 $\Sigma_0 = I$를 기본값으로 사용**합니다.
 - **DAS 조회 거리 및 '공통 관측 속성 0개 = 증거 부족' 처리:**
   $$d(q, \text{DAS}_c) = \sum_{d=1}^{64} \frac{w_{c,d}}{\Sigma_{0,d} + \epsilon}\left(z_{\text{struct}, d}^{(q)} - \mu_{c, d}\right)^2 + \gamma \, D_{\text{struct}}(q, c)$$
@@ -404,9 +408,9 @@ L_pred = mean[0.5 * ((e_next - μ_pred)^2 / σ²_pred + log(σ²_pred))]
 
 #### 2. 2단계 역추론, 중복 관측 감쇠 및 EIG 계산식 (수치 안정화 규격 포함)
 
-- **초기 자유 탐색($t=1\sim 3$):** `Active-coverage` 탐색 후 $t=3$에서 $d(q, \text{DAS}_c)$ 기반 초기 posterior $b_3(c)$ 계산(`log_softmax` 정규화).
+- **첫 관측 즉시 판정($t=1$):** 첫 관측에서 $b_1(c)$를 만들고 즉시 판정 조건을 검사합니다. 증거가 충분하면 여기서 종료하며, 계속 탐색하는 경우에만 $t\ge 2$부터 새 증거를 반영해 posterior를 갱신합니다. 첫 관측을 posterior 초기화와 갱신에 이중 반영하지 않습니다.
 - **Top-K 후보 활용 vs 전체 posterior 갱신 분리:**
-  - **전체 posterior $b_t(c)$ 갱신:** 매 스텝($t \ge 4$) **모든 후보 전체**에 대해 우도와 새로 확인된 구조 불일치($\Delta m_{q,k}^{(t)} = \max(0, m_{q,k}^{(t)} - m_{q,k}^{(t-1)}) \cdot m_{c,k}$)를 반영해 갱신합니다(탈락 후보 **재진입** 보장).
+  - **전체 posterior $b_t(c)$ 갱신:** 매 스텝($t \ge 2$) **모든 후보 전체**에 대해 우도와 새로 확인된 구조 불일치($\Delta m_{q,k}^{(t)} = \max(0, m_{q,k}^{(t)} - m_{q,k}^{(t-1)}) \cdot m_{c,k}$)를 반영해 갱신합니다(탈락 후보 **재진입** 보장).
   - **중복 관측 감쇠 계수 $\rho_t(a_t)$ 및 `logsumexp` 기반 log-posterior 갱신:** 시야가 겹칠 때 동일 증거의 중복 누적을 막고, 경계 이탈 시 `0` 나눗셈과 다단계 `overflow/underflow`를 방지하기 위해 아래 정규화 식을 사용합니다.
     $$\text{ov}_{\text{fov}}(a_t) = \frac{|M_t^{\text{fovea}} \cap U_{t-1}^{\text{fovea}}|}{\max(|M_t^{\text{fovea}}|,\; \epsilon)}, \qquad \text{ov}_{\text{full}}(a_t) = \frac{|M_t^{\text{full}} \cap U_{t-1}^{\text{full}}|}{\max(|M_t^{\text{full}}|,\; \epsilon)}$$
     $$\rho_t(a_t) = \max\left(\rho_{\min},\; \lambda_f (1 - \text{ov}_{\text{fov}}(a_t)) + (1 - \lambda_f)(1 - \text{ov}_{\text{full}}(a_t))\right)$$
@@ -424,10 +428,11 @@ L_pred = mean[0.5 * ((e_next - μ_pred)^2 / σ²_pred + log(σ²_pred))]
   - 여기서 $\tilde{b}_{t+1}(c \mid e^{(m)}, a)$ 역시 동일한 $\alpha\,\rho_{t+1}(a)\cdot \frac{1}{D}\log p(e^{(m)} \mid \dots, \text{DAS}_c)$ 갱신과 `logsumexp` 정규화로 계산하며, 연산량 통제를 위해 아래 4단계를 비교합니다:
     1. `Coverage 기반 탐색`
     2. `예측 차이 휴리스틱` (Top-K 후보 간 $\mu_{\text{pred}}$ 차이 최대 위치 — MC 생략)
-    3. **`Top-K Fast EIG`** ($\mathcal{C}_{\text{eval}} = \text{Top-}K(b_t)$, $K=3$, `GRU` 1스텝 롤아웃 및 비-Top-K 후보 우도 갱신 생략으로 연산 최소화)
-    4. **`Full EIG`** ($\mathcal{C}_{\text{eval}}$ = 전체 10후보, `GRU` 롤아웃 포함 여부 명시)
+    3. **`Top-K Fast EIG`** ($\mathcal{C}_{\text{eval}} = \text{Top-}K(b_t \mid c \in C)$, $K=\min(3, |C|)$, `GRU` 1스텝 롤아웃 및 비-Top-K 후보 우도 갱신 생략으로 연산 최소화)
+    4. **`Full EIG`** ($\mathcal{C}_{\text{eval}} = C$ 전체 후보, `GRU` 롤아웃 포함 여부 명시)
 - **EIG × 적응 2×2 교차:** `(Coverage/Fixed vs EIG) × (R0 무적응 vs R4 적응)` 비교로 추론 효율과 적응 효과를 분리합니다.
-- **정지 및 Unknown:** 최소 3회 후 보정 confidence·상위 차·기대 이득을 반영해 정지하며, 예산 소진까지 불확실하면 `Unknown` 반환.
+- **빈 후보·단일 후보 판정:** 후보가 0개면 정규화 전에 `Unknown`을 반환합니다. 후보가 1개면 기본 `w_c`를 사용하고 2위와의 차이는 계산하지 않습니다. 단일 후보의 posterior는 항상 1이므로, `KNOWN` 판정에는 관측과 DAS가 실제로 부합한다는 근거($D_{\text{struct}}$ 절대 임계치 또는 누적 관측 커버리지 절대 임계치 중 사전 등록된 것)를 요구합니다(Phase 4 정지·Unknown, 항목 6 동결 참조).
+- **정지 및 Unknown:** 후보 1개 이상인 상태에서 최소 3회 후 보정 confidence·상위 차·기대 이득을 반영해 정지하며, 예산 소진까지 불확실하면 `Unknown` 반환. 증거가 부족하지만 새로 볼 영역이 있다면 Active-coverage로 추가 관측할 수 있고, 관측이 소진되면 `Unknown`으로 종료합니다.
 
 ### 가설 및 검증 방법
 
@@ -457,17 +462,21 @@ L_pred = mean[0.5 * ((e_next - μ_pred)^2 / σ²_pred + log(σ²_pred))]
 | **③ 기존 개념 기각 반례**<br>(Negative-Only Rejection) | 원래 클래스 $y$의 핵심 구조가 깨졌으나 다른 특정 클래스로 확정되지 않은 사례(예: 획 단절·비정상 고리) | **어떠한 정답 라벨로도 $L_{\text{class}}$ 학습 금지**; 오직 $y$에서 밀어내는 $L_{\text{ranking}}$ 기각 항에만 투입 |
 | **④ 불확실한 반례**<br>(Ambiguous / Unverified) | 구조 정합성 검사를 통과하지 못했거나 어느 쪽인지 모호한 사례 | **학습 최적화에서 완전 제외** (로그·분석/후속 질의 후보로만 기록) |
 
+- **도메인 규칙과 공통 Replay 분리:** 변형 생성과 라벨 보존·변경 확인은 **도메인별 규칙**(예: 손글씨 획 규칙, 텍스트 부정/동음이의어 규칙)이 담당하며, 공통 Replay는 기존 4종 반례의 학습 허용 범위만 적용합니다. 업데이트 대상과 혼동 쌍은 `concept_id`로 연결하고, 초기화와 혼합 규칙은 현재 에피소드의 초기 support 집합을 참조합니다. `8→3`은 손글씨 예시로 유지하며, MNIST 공식 실행에서는 초기 support가 여전히 10장이고, `R1_matched`와 `R4_pool`의 기존 통제 조건(동일 후보 풀·예산·`Frozen`)도 보존됩니다.
+
 #### 2. 내부 적응 손실함수 ($L_{\text{adapt}}$) 구체 계산식
 
 $$L_{\text{adapt}} = L_{\text{class}} + \lambda_p L_{\text{predict}} + \lambda_r L_{\text{ranking}} + \lambda_a L_{\text{anchor}}$$
 
 1. **개념 분류 손실 ($L_{\text{class}}$):** 유형 ①, ②(정답 확정 표본 $(x, y^*)$)에 대해 DAS 거리 기반 `log_softmax` cross-entropy($\tau \ge \tau_{\min} > 0$) 적용:
    $$L_{\text{class}}(x, y^*) = -\left(\frac{-d(x, \text{DAS}_{y^*})}{\tau} - \operatorname{logsumexp}_{c}\left(\frac{-d(x, \text{DAS}_c)}{\tau}\right)\right)$$
-2. **다음 관측 예측 손실 ($L_{\text{predict}}$):** 유형 ①, ②의 관측 시퀀스에 대해 정답 $y^*$ 조건부 World Model `W`의 클램핑된 분산 기반 Gaussian NLL 적용:
-   $$L_{\text{predict}}(x, y^*) = \frac{1}{T-1}\sum_{t=1}^{T-1}\frac{1}{2D}\sum_{d=1}^{D}\left(\frac{(e_{t+1,d} - \mu_{\text{pred}, d}(y^*))^2}{\sigma_{\text{pred}, d}^2(y^*)} + \log \sigma_{\text{pred}, d}^2(y^*)\right)$$
+2. **다음 관측 예측 손실 ($L_{\text{predict}}$):** 유형 ①, ②의 관측 시퀀스에 대해 **실제로 존재하는 인접 관측 쌍**을 기준으로 평균 내며, 정답 $y^*$ 조건부 World Model `W`의 클램핑된 분산 기반 Gaussian NLL을 적용합니다. 관측 쌍이 $N_{\text{pair}}$개일 때:
+   $$L_{\text{predict}}(x, y^*) = \frac{1}{\max(N_{\text{pair}},\;1)}\sum_{t=1}^{N_{\text{pair}}}\frac{1}{2D}\sum_{d=1}^{D}\left(\frac{(e_{t+1,d} - \mu_{\text{pred}, d}(y^*))^2}{\sigma_{\text{pred}, d}^2(y^*)} + \log \sigma_{\text{pred}, d}^2(y^*)\right)$$
+   $T=1$이면 다음 관측 예측항은 생략합니다(분모를 $\max(N_{\text{pair}},1)$로 해 0 나누기 방지).
 3. **반례·혼동 변별 손실 ($L_{\text{ranking}}$):**
    - 유형 ①, ②의 양성 표본 $(x, y^*)$과 혼동 경쟁 클래스 $j \neq y^*$ 사이 거리·예측 마진 확보:
-     $$\ell_{\text{pair}}(x, y^*, j) = \max\left(0,\; d(x, \text{DAS}_{y^*}) - d(x, \text{DAS}_j) + m_1\right) + \max\left(0,\; \text{NLL}_W(x \mid y^*) - \text{NLL}_W(x \mid j) + m_2\right)$$
+     $$\ell_{\text{pair}}(x, y^*, j) = \max\left(0,\; d(x, \text{DAS}_{y^*}) - d(x, \text{DAS}_j) + m_1\right) + \mathbb{I}[T>1]\cdot\max\left(0,\; \text{NLL}_W(x \mid y^*) - \text{NLL}_W(x \mid j) + m_2\right)$$
+     $T=1$이면 다음 관측 NLL 항은 생략합니다. 해당 표본에 적용 가능한 분류·거리 기반 항만 계산합니다.
    - 유형 ③(기존 클래스 $y$ 기각 반례 $x_{\text{rej}}$)은 $y$의 중심으로부터 최소 마진 $m_{\text{rej}}$ 이상 분리:
      $$\ell_{\text{rej}}(x_{\text{rej}}, y) = \max\left(0,\; m_{\text{rej}} - d(x_{\text{rej}}, \text{DAS}_y)\right)$$
 4. **기억·파라미터 이탈 방지 손실 ($L_{\text{anchor}}$):** 초기 상태($\Delta\mu=0, w^{(0)}, \theta_W^{(0)}$) 대비 과도한 이탈 및 기존 실제 지원 표본의 손실 증가 억제:
@@ -568,7 +577,7 @@ flowchart TD
 #### 1. Phase 6·7 통합 사전 동결 (`Unified Confirmatory Freeze`)
 
 Phase 5 완료 후 공식 평가 데이터에 접근하기 직전, **Phase 6과 Phase 7 전체를 하나의 동결 manifest(`freeze_manifest.json`)로 일괄 서명·동결**합니다.
-- **통합 동결 항목:** (1) 동결 체크포인트·초기 `DAS` 생성 규칙, (2) 모든 하이퍼파라미터 및 **`Unknown`/정지 임계값**(`28×28`, `56×56`, 부분 가림, 문자 전이 모두 포함), (3) **Phase 6·7의 데이터 분할 ID, 56×56 이동 seed, 가림(10/20/30% 블록/패치) seed, EMNIST/Omniglot 전이 10개 문자 클래스 분할**, (4) 비용 산정식, 주 지표, MDE 및 통계 판정 규칙.
+- **통합 동결 항목:** (1) 동결 체크포인트·초기 `DAS` 생성 규칙, (2) 모든 하이퍼파라미터 및 **`Unknown`/정지 임계값**(`28×28`, `56×56`, 부분 가림, 문자 전이 모두 포함), (3) **EIG 모드와 Active-coverage 모드 각각의 비용 대비 정지 임계치(가중치 $\lambda$ 포함: EIG 모드는 `$\lambda \cdot \text{EIG} \ge \text{비용 임계치}$` 또는 `$\text{EIG 개선} < \epsilon$`, Active-coverage 모드는 `$\text{예상 커버리지 이득} \ge \lambda \cdot \text{관측 비용(면적/스텝)}$`)**, (4) **|C|=1 시 KNOWN 판정의 절대 근거 지표($D_{\text{struct}}$ 절대 임계치 또는 외형 유사도 또는 누적 관측 커버리지 중 사전 등록된 하나)**, (5) **Phase 6·7의 데이터 분할 ID, 56×56 이동 seed, 가림(10/20/30% 블록/패치) seed, EMNIST/Omniglot 전이 10개 문자 클래스 분할**, (6) 비용 산정식, 주 지표, MDE 및 통계 판정 규칙.
 - Phase 6 결과를 확인한 뒤 Phase 7의 임계값·예산·클래스 분할을 수정하는 행위는 엄격히 금지되며, Phase 7은 동결 아티팩트의 **읽기 전용 실행**만 수행합니다.
 
 #### 2. 비교군 초기화 조건 (구조 맞춤)
@@ -600,12 +609,12 @@ Phase 5 완료 후 공식 평가 데이터에 접근하기 직전, **Phase 6과 
 
 | 가설 | 단일 주 평가 지표 (Primary Metric) | 잠정 MDE | 필수 동반 제약 |
 |---|---|---|---|
-| **H1** | 동일 관측 예산(10스텝)에서의 **paired accuracy 차** (`Active − Fixed/Random`) | **+3.0%p** | 동일 센서·비용 조건 준수 |
+| **H1** | 동일 관측 예산(고정 예산 곡선 vs 적응형 Stop 정책 비교 실험)에서의 **paired accuracy 차** (`Active − Fixed/Random`) | **+3.0%p** | 동일 센서·비용 조건 준수, 정지 임계치 동결 |
 | **H2** | 독립 스타일 변형 집합에서의 **accuracy 하락폭 감소** (`ΔAcc_A4 − ΔAcc_제안`) | **+3.0%p 방어** | 동일 총 파라미터 예산(`A4`) |
 | **H3** | `B4` 대비 **1-shot paired accuracy 차** (`DAS − B4`) | **+3.0%p** | 동일 사전학습·support |
 | **H4 (주)** | 동일 풀·예산 내 **`R4_pool − R1_matched` paired accuracy 차** | **+2.0%p** | 동일 후보 풀·예산·`Frozen` |
 | **H5 (주)** | 동일 예산 내 **AURC 상대 감소율** (보조: 고정 coverage 오류 감소, OOD AUROC) | **≥ 10% 상대 감소** | 셔플 테스트·누출 차단 통과 |
-| **H6** | 동일 목표 정확도 도달에 필요한 **평균 관측 비용(glimpse/FLOPs) 절감률** | **≥ 20% 절감** | 정확도 열등성 없음 |
+| **H6** | 적응형 Stop 켜고 목표 정확도 도달에 필요한 **실제 사용 관측 수와 FLOPs 측정**, 평균 관측 비용 절감률 | **≥ 20% 절감** | 정확도 열등성 없음, 정지 임계치 동결 |
 | **H12-V** | 독립 holdout에서 **`S5 − S1` 최종/평균 paired accuracy 차** | **+3.0%p** | `S1 vs S2` 신경망 학습 확인 |
 | **H13-V** | 기존 스타일·클래스 평균 망각 **$F_t$** 상한 이내 유지 | **상한 이하 유지** | $F_t \le F_{\max}$(Dev에서 고정) |
 | **H15-V** | 독립 holdout 충돌 쌍에서 **`S5 − S3/S4` macro recall 개선** 및 혼동률 감소 | **+2.5%p** | `H13-V` 망각 상한 충족 |
@@ -660,11 +669,22 @@ Phase 5 완료 후 공식 평가 데이터에 접근하기 직전, **Phase 6과 
 ### 해석의 한계 및 완료 체크리스트
 
 - B4 대비 DAS 우위나 R4 우위는 해당 prior·데이터 조건에서의 메커니즘 효과일 뿐 범용 지능·자율 사실 발견으로 과대해석하지 않습니다.
+- `stop_reason`은 `판정 완료`(충분한 근거로 KNOWN/UNKNOWN 확정), `관측 소진`(접근 가능한 관측 모두 소진), `추가 이득 부족`(기대 이득 ≤ 비용), `실험 상한`(예산·스텝 상한 도달) 네 가지로 구분하며, 실험 상한으로 끝난 경우도 식별할 수 있게 trace에 기록합니다.
 - [ ] Phase 0~7 초경량 4종 자원(가중치 ≤4GB/기억/체크포인트/VRAM·RAM) 및 1B 파라미터 상한(Q/DAS 포함) 계측 완료
 - [ ] Phase 6·7 통합 동결(`freeze_manifest.json`), `A4`·`S0~S5` 전수·3값 통계 판정 완료
 - [ ] 텍스트·LLM 라이브러리 미설치 환경에서 설치·추론·적응·재시작·오프라인 `report.html` 재현 완료
 
 **기본 프로젝트 종료:** Phase 7에서 기본 패키지 API·체크포인트 버전을 동결합니다.
+
+### Phase 7 Add-on — MNIST 의존성 분리 검증 및 Phase 8 인계
+
+기본 프로젝트의 모든 설계 변경(가변 후보·단일 후보·속성 호환·획 단서 없는 탐색·적응형 Stop·`T=1` Replay)을 합성 입력과 기존 MNIST 회귀로 검증합니다. MNIST 회귀에서는 동일 관측열에서 보존돼야 하는 계산 결과와 새 Stop 정책으로 달라지는 종료 시점을 구분합니다.
+
+**완료 조건:**
+- 가변 후보(|C| 변경), 단일 후보(|C|=1 KNOWN 절대 근거), 구조 속성 호환(버전·순서·정의), 획 단서 없는 프로파일 탐색, 적응형 Stop(모드별 비용-이득 임계치), `T=1` Replay 손실(0 나누기 없음) 모두 기술 PASS
+- MNIST 회귀: 동일 관측열에서 기존 계산 결과 보존, 새 Stop 정책에 따른 종료 시점 변화 확인
+
+**Phase 8 인계 확인:** Phase 8 진입 경로에서 동결된 패키지·체크포인트·기억을 복원한 뒤, `concept_id`와 DAS 대응 및 센서·Stop 설정을 유지한 상태로 첫 추론을 수행합니다. 후보 집합 $C$가 변경될 때 기존 개념들의 `w_c`는 새 $C$ 기준으로 전량 재계산합니다(항목 2·9).
 
 ---
 
@@ -852,9 +872,9 @@ python -m foveacore render_language --config configs/phase13.yaml --packet <pack
 | **Observation** | `modality`, `source_id`, `location/span`, `features`, `observed_mask`, `confidence`, `cost`, `provenance` (이미지: `preprocess_profile_id`, `original_hw`, `processed_hw`, `sensor_profile`, `grid_size`를 provenance/metadata에 포함; 기본 `[B,4,5,5]`, 확장 별도 `[B,4,97,97]`) |
 | **Action** | `modality`, `target`, `resolution/window`, `cost` (오직 센서만 실제 원본 데이터 조회 허용) |
 | **Structure** | `entity/attribute/relation`, `embedding`, `uncertainty`, `source_evidence` |
-| **Hypothesis** | `concept_id`, `belief`, `supporting/contradicting_evidence` |
+| **Hypothesis** | `concept_id`(후보 집합 $C$의 멤버), `belief`, `supporting/contradicting_evidence` ($C$ 변경 시 `w_c` 재계산 규칙은 항목 2·9 인계 확인 참조) |
 | **Prediction** | `modality_specific_distribution`, `candidate_observation`, `expected_cost` |
-| **Memory** | `concept_record`, `evidence_links`, `modality_views`, `versions`, `uncertainty` |
+| **Memory** | `concept_record`(`concept_id`로 DAS와 대응), `evidence_links`, `modality_views`, `versions`, `uncertainty` |
 
 ## 부록 2. JSON 입출력 계약, `SemanticPacket` 및 `quarantine.json`
 

@@ -247,7 +247,7 @@ flowchart LR
 - **`dev_stream` vs 비숫자 dev 분할 용도 엄격 분리:**
   - **엄격 1-shot (`STRICT_1SHOT`):** **숫자 개발 데이터(`dev_stream`)로 임계값·하이퍼파라미터 보정 절대 금지.** 오직 **비숫자(`non_digit_dev`) 또는 합성 dev 분할**만 보정에 사용.
   - **`dev_stream`:** Phase 5/6의 **지속 학습(`CONTINUAL`) 스트림 개발** 전용.
-  - **Phase 0 Smoke Test:** `quick_smoke`(1~3 에피소드) 및 `phase0_full_smoke`(30 에피소드) 모두 **파이프라인 배선·해시·자원 계측 확인 전용**이며 수치 기반 모델 개선·보정을 수행하지 않음.
+  - **Phase 0 Smoke Test:** `quick_smoke`(1~3 에피소드) 및 `phase0_full_smoke`(30 에피소드) 모두 **파이프라인 배선·해시·자원 계측 확인 전용**이며 수치 기반 모델 개선·보정을 수행하지 않음. `phase0_full_smoke`는 항목 5의 **적응형 Stop 규칙**(최초 3회 의무 탐색 제거, 첫 관측 즉시 판정, t≥2부터 새 증거 반영)을 준수해 실행해야 함.
 - `experiments/preregistration_v1.9.3.md` 확정 및 `evaluation/statistics.py` 단위 테스트(MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 차단, 입력 예외·`σ=0` 방어).
 
 ---
@@ -274,7 +274,7 @@ flowchart LR
 2. **데이터 격리·봉인·외부 분할 규칙 (`T3`):** 분할 간 ID·SHA-256 중복 0건, OOD·Phase 7 전이 disjoint 규칙 검증기 동작, `freeze_manifest.json` canonical 해시 + 독립 기준점 + 내부 교차 해시 검증, `Phase 0~5` 봉인 차단 확인.
 3. **정책 결합 & 미래 차단 (`T4`):** `PolicyCompatibilityValidator` 모순 조합(`(STRICT_1SHOT, P3)` 등) 차단, `STRICT_1SHOT` 11번째 숫자 차단 및 숫자 dev 보정 차단, 에피소드 초기 스냅샷 복원, 미래 데이터 선조회 차단 검증.
 4. **전체 상태 불변·라벨 권한 (`T2/T4`):** `INFER` 중 `parameters()`·`buffers()`·`memory`·`eval()` 및 `torch.Tensor` 방어 복사/변이 차단, `ADAPT`의 공식 평가/미확정 query 라벨 조회 차단, 확정 전 라벨 차단 통과.
-5. **GPU 결정론·분리된 재현성 검증 (`T2/T5`):** `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `deterministic_algorithms`, FP32(TF32 차단) 활성 및 동일 `gpu_name`·`cuda_version`·`precision` 환경에서 동일 시드 2회 실행 시 에피소드 ID·예측 클래스 완전 일치, 부동소수점 지표 `atol=1e-6` 이내 일치, `torch.cuda.synchronize()` + 워밍업 지연/`Peak VRAM`/`Peak RAM` 분포 기록 확인.
+5. **GPU 결정론·분리된 재현성 검증 (`T2/T5`):** `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `deterministic_algorithms`, FP32(TF32 차단) 활성 및 동일 `gpu_name`·`cuda_version`·`precision` 환경에서 동일 시드 2회 실행 시 에피소드 ID·예측 클래스 완전 일치, 부동소수점 지표 `atol=1e-6` 이내 일치, `torch.cuda.synchronize()` + 워밍업 지연/`Peak VRAM`/`Peak RAM` 분포 기록 확인. **또한 적응형 Stop 규칙**(최초 3회 의무 탐색 제거, 첫 관측에서 b₁ 생성 후 즉시 판정, 계속 탐색 시에만 t≥2부터 새 증거 반영, 종료 조건: 판정 근거 충분 / 관측 소진 / 기대 이득 ≤ 비용)을 준수하는지 확인.
 6. **B0/B1 Smoke Test (`T5/T8`):** `quick_smoke`(1~3 에피소드) 및 `phase0_full_smoke`(고정 시드 **`30` 에피소드**, **`10-way 1-shot`**, `n_query_per_class=20`)에서 `B0` 및 `B1`(`scikit-image`)이 보정/튜닝 없이 정상 실행·경계 조건(`NaN` 0건) 통과.
 7. **GPU 자원 계측 정확성 (`T6`):** 검증용 더미 모델(공유 파라미터·뷰·버퍼·Q·DAS 포함)에서 `data_ptr` 중복 제거 후 `total == active + frozen` 오차 0, `≤ 1B` & `≤ 4 GB (4,000,000,000 bytes)` 검사, `peak_vram`·`peak_ram`, `B0/B1` 비파라미터 상태량, `unsupported_ops`·계측 모드·스레드·CUDA 환경 기록 확인.
 8. **Manifest·산출물·실패 복구 (`T7`):** 부록 4·5 전체 파일 및 필드(5종 시드 + `gpu_name`/`cuda_version`/`precision`/`deterministic_settings`/`peak_vram` 포함) 기록, `git_dirty` 차단 훅, 실패 복구 테스트 7종(`NumericalInstabilityError` 포함, `python -O`에서도 검출) 모두 `exit_code != 0` + `FAILED` 원인 기록 확인.
