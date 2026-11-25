@@ -140,7 +140,11 @@
 - **의존성 잠금 파일 생성:** `pip freeze > locks/phase0_requirements.lock`으로 현재 GPU/CUDA 환경 의존성 버전을 Git으로 추적·고정하고, `dependency_lock_hash`는 이 lock 파일의 SHA-256으로 산출
 
 ### `T1` — 패키지 골격, CLI 및 Git 추적 명확화 (`0.1`)
-- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현 (`input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.grid_size=5`, `sensor.channels=4`, `sensor.profile=F3`는 **센서 계약 설정값**으로 선등록; 고해상도 `grid_size=97`는 별도 프로파일로 관리). 프로파일별 `sensor.stroke_clue_available: true/false`를 메타데이터로 선등록해 획 단서 제공 여부를 명시합니다.
+- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현:
+  - `input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.grid_size=5`, `sensor.channels=4`, `sensor.profile=F3`는 **센서 계약 설정값**으로 선등록하고, 고해상도 `grid_size=97`은 별도 프로파일로 관리합니다.
+  - `SENSOR_PROFILES`에 프로파일별 `stroke_clue_available` 불리언을 선언하고, `REQUIRED_SENSOR_KEYS` 및 YAML의 `sensor` 필드와 연결합니다. 선택한 프로파일의 선언값과 YAML 값이 일치해야 합니다.
+  - `test_config.py`에서 정상 불리언, 문자열 `"false"` 같은 잘못된 타입, 선택한 프로파일과의 값 불일치를 검사합니다.
+  - `support_per_episode == 10` 검증은 **MNIST 공식 설정**에만 적용합니다. 공식 MNIST smoke의 `smoke.way == 10` 검사는 유지하되, 일반 `STRICT_1SHOT` 3-way 설정은 `support_per_episode == 3`을 통과해야 합니다. 코드 조건과 오류 메시지에도 `support_per_episode == 10`이 MNIST 공식 설정 요구임을 명시합니다.
 - `src/foveacore/__main__.py` CLI 진입점 구현 (`validate`, `build-splits`, `smoke-baseline`)
 - `git_dirty` 판정 기준 명문화: `git status --porcelain` 기준으로 `src/`, `configs/`, `locks/`, `pyproject.toml` 내 수정·미추적(untracked) 파일 존재 시 `git_dirty = True`
 - 금지 패키지(`transformers`, `openai`, `anthropic`, `llama_cpp`, `vllm`, `langchain` 등) 미설치/미임포트 검증 테스트
@@ -153,7 +157,10 @@
   - 비결정론 CUDA 연산(`grid_sample`·`scatter_add` 등 Phase 1~5 예정 연산 포함) 검출 테스트 훅 제공
 - `utils/provenance.py`: OS/CPU/GPU(`gpu_name`)/CUDA(`cuda_version`)/cuDNN(`cudnn_version`)/PyTorch(`torch_version`)/정밀도(`precision`, `allow_tf32`)/결정론 설정/스레드/Git/패키지 수집
 - `core/exceptions.py` (또는 `core/contracts.py`): 명시적 `NumericalInstabilityError` 정의(`assert`는 `python -O`에서 무시되므로 수치 검증에 사용 금지)
-- `core/contracts.py`: 이미지 Observation provenance의 `original_hw`, `processed_hw`, `preprocess_profile_id`, `[0,1]` 좌표 및 `sensor_profile/grid_size`를 추가하고 기본/확장 격자 프로파일을 서로 호환 불가한 별개 버전으로 관리합니다. `Observation.provenance.sensor_profile`로 프로파일의 `stroke_clue_available` 선언을 조회할 수 있게 하며, 관측마다 동일 값을 복제하지 않습니다.
+- `core/contracts.py`: 이미지 Observation provenance의 `original_hw`, `processed_hw`, `preprocess_profile_id`, `[0,1]` 좌표 및 `sensor_profile/grid_size`를 추가하고 기본/확장 격자 프로파일을 서로 호환 불가한 별개 버전으로 관리합니다.
+  - `SensorProfileContract`에 `stroke_clue_available: bool` 필드를 추가하고, 값을 T1의 `SENSOR_PROFILES`에서 가져옵니다.
+  - 기존 조회 경로인 `SENSOR_PROFILE_CONTRACTS[obs.provenance["sensor_profile"]].stroke_clue_available`로 선언을 읽을 수 있게 하며, 관측별 provenance에 값을 복제하지 않습니다.
+  - `test_contracts.py`에서 Observation 직렬화·복원 후에도 위 경로로 동일한 불리언이 조회되는지 검증합니다.
 - `core/contracts.py`: `v1.9.3` 부록 1의 6대 인터페이스(`Observation`, `Action`, `Structure`, `Hypothesis`, `Prediction`, `Memory`) 정의
   - **내부 데이터·Tensor·버퍼 불변성 보호:**
     - `dict` → `MappingProxyType`, `list` → `tuple`, `np.ndarray` → `setflags(write=False)`
@@ -282,4 +289,4 @@ flowchart LR
 9. **통계 판정 및 예외 처리 (`T8`):** MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 배제, `n<2`·`σ=0`·`NaN`·`MDE<=0` 예외 처리 단위 테스트 전수 통과.
 10. **사전등록 완료 (`T8`):** `experiments/preregistration_v1.9.3.md` 확정 및 `python -m foveacore validate --config configs/phase0.yaml` 최종 PASS.
 
-**Phase 1 센서 인수용 추가 계약 테스트(Phase 0에서는 스키마/fixture만):** `28×28`·`56×56` 무변형, `640×480`·`800×1000` 무업스케일, `4096×3072`·`3072×4096`·`1920×1080`의 예상 결과 크기, 1픽셀 축, `(x,y)` 좌표 왕복, 채널 4개 및 유효비율 범위, 마스크 기반 평균의 빈 bin 처리, F4 3×3→5×5 정렬, 원본/전처리 해시·프로파일 기록. **실제 GPU 풀링/센서 본체의 PASS는 Phase 1 게이트**로 유지합니다.
+**Phase 1 센서 인수용 추가 계약 테스트(Phase 0에서는 스키마/fixture만):** `28×28`·`56×56` 무변형, `640×480`·`800×1000` 무업스케일, `4096×3072`·`3072×4096`·`1920×1080`의 예상 결과 크기, 1픽셀 축, `(x,y)` 좌표 왕복, 채널 4개 및 유효비율 범위, 마스크 기반 평균의 빈 bin 처리, F4 3×3→5×5 정렬, 원본/전처리 해시·프로파일 기록, `stroke_clue_available` 프로파일 선언 및 Observation 조회, MNIST 공식 10-way와 일반 3-way `STRICT_1SHOT` 설정 검증. **실제 GPU 풀링/센서 본체의 PASS는 Phase 1 게이트**로 유지합니다.
