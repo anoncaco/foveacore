@@ -23,7 +23,7 @@ from foveacore.data.splits import (
     validate_split_manifest,
 )
 from foveacore.forbidden_packages import assert_no_forbidden_packages
-from foveacore.utils.seed import DEFAULT_SEEDS, ensure_cublas_before_cuda
+from foveacore.utils.seed import DEFAULT_SEEDS, initialize_gpu_runtime
 
 
 def _validate_data_integrity(out_dir: Path) -> list[str]:
@@ -64,7 +64,7 @@ def _validate_data_integrity(out_dir: Path) -> list[str]:
 
 def main(argv=None) -> int:
     try:
-        ensure_cublas_before_cuda()
+        initialize_gpu_runtime()
     except RuntimeError as exc:
         print(f"ERROR: {exc}")
         return 1

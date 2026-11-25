@@ -72,7 +72,7 @@ def test_cublas_setup_error_is_clean(monkeypatch, capsys):
     def fail():
         raise RuntimeError("CUBLAS setup failed")
 
-    monkeypatch.setattr(cli, "ensure_cublas_before_cuda", fail)
+    monkeypatch.setattr(cli, "initialize_gpu_runtime", fail)
     assert cli.main(["validate", "--config", str(CONFIG_PATH)]) == 1
     output = capsys.readouterr().out
     assert "ERROR:" in output

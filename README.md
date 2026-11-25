@@ -26,3 +26,14 @@ Phase 0~7 동안 생성되는 주요 문서·산출물:
 ## 개발 환경
 - Python 가상환경: .venv
 - 현재 단계: Phase 0
+
+## GPU 운영 초기화 순서
+
+GPU 정보 수집 전에 운영 진입점에서 다음 순서를 완료해야 합니다.
+
+1. `initialize_gpu_runtime()` — `CUBLAS_WORKSPACE_CONFIG=:4096:8` 설정 및 CUDA 초기화 전 검증
+2. 동일 함수에서 결정론·FP32 정밀도·TF32 차단 설정 검증
+3. `collect_provenance()` — GPU/CUDA/환경 정보 수집
+
+`collect_provenance()`는 순서가 뒤집이면 CUDA를 초기화하는 조회 전에 `RuntimeError`를 반환하며,
+내부에서 `set_gpu_determinism()`을 자동 호출하지 않습니다(모델 RNG 재시드 방지).

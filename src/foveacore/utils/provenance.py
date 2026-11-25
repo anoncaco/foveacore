@@ -13,7 +13,7 @@ import subprocess
 from importlib import metadata
 from pathlib import Path
 
-from foveacore.utils.seed import DEFAULT_SEEDS
+from foveacore.utils.seed import ensure_gpu_runtime_initialized, get_applied_seeds
 
 SCHEMA_VERSION = "1.0"
 
@@ -113,13 +113,17 @@ def _dependency_lock_hash():
 
 
 def collect_provenance(seeds=None):
-    """전체 환경 정보 수집 → dict(manifest에 포함되는 필드 그룹)."""
-    from foveacore.utils.seed import DEFAULT_SEEDS
+    """운영 초기화 이후 전체 환경 정보를 수집한다(내부에서 결정론을 재설정하지 않음)."""
+    ensure_gpu_runtime_initialized()
+    from foveacore.utils.seed import _normalize_seeds
 
     t = _torch()
-    applied = dict(DEFAULT_SEEDS)
-    if seeds:
-        applied.update(seeds)
+    applied = get_applied_seeds()
+    if seeds is not None:
+        requested = _normalize_seeds(seeds)
+        if requested != applied:
+            raise ValueError("seeds가 실제로 적용된 시드와 일치하지 않습니다(T2).")
+        applied = requested
 
     if t.cuda.is_available():
         compute_device = f"cuda:{t.cuda.current_device()}"

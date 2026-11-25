@@ -1,6 +1,11 @@
 """utils/seed.py 시드·GPU 결정론·TF32 차단 테스트 (T2)."""
 
+import os
+from pathlib import Path
 import random
+import subprocess
+import sys
+import textwrap
 
 import numpy as np
 import pytest
@@ -16,14 +21,33 @@ from foveacore.utils.seed import (
     create_rng,
     detect_unstable_cuda_ops,
     ensure_cublas_before_cuda,
+    ensure_gpu_runtime_initialized,
     find_unstable_ops,
+    get_applied_seeds,
     get_rng,
     gpu_determinism_status,
+    initialize_gpu_runtime,
     is_gpu_deterministic,
     set_cublas_workspace_config,
     set_gpu_determinism,
     verify_cublas_workspace_config,
 )
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _run_cuda_script(source):
+    env = os.environ.copy()
+    env.pop("CUBLAS_WORKSPACE_CONFIG", None)
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(source)],
+        cwd=_PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
 
 def test_seed_names_are_the_five():
@@ -39,6 +63,15 @@ def test_seed_names_are_the_five():
 def test_apply_seeds_returns_five_seed_keys():
     seeds = apply_seeds()
     assert set(seeds) == set(SEED_NAMES)
+
+
+def test_apply_seeds_records_normalized_snapshot():
+    expected = dict(DEFAULT_SEEDS, model_seed=88)
+    apply_seeds({"model_seed": 88})
+    recorded = get_applied_seeds()
+    assert recorded == expected
+    recorded["model_seed"] = 0
+    assert get_applied_seeds() == expected
 
 
 def test_partial_seed_override_is_reproducible():
@@ -116,6 +149,28 @@ def test_ensure_cublas_rejects_change_after_initialization(monkeypatch):
         ensure_cublas_before_cuda()
 
 
+def test_initialize_gpu_runtime_enforces_setup_order(monkeypatch):
+    calls = []
+
+    def set_cublas():
+        calls.append("cublas")
+        return True
+
+    def set_determinism(model_seed=None):
+        calls.append(("determinism", model_seed))
+        return True
+
+    monkeypatch.setattr("foveacore.utils.seed.ensure_cublas_before_cuda", set_cublas)
+    monkeypatch.setattr("foveacore.utils.seed.set_gpu_determinism", set_determinism)
+    assert initialize_gpu_runtime(88) is True
+    assert calls == ["cublas", ("determinism", 88)]
+
+
+def test_set_gpu_determinism_marks_runtime_initialized():
+    set_gpu_determinism()
+    assert ensure_gpu_runtime_initialized() is True
+
+
 def test_set_gpu_determinism_flags(monkeypatch):
     calls = []
     original = torch.use_deterministic_algorithms
@@ -158,15 +213,84 @@ def test_unstable_ops_guard_allows_cpu_operations():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
 def test_unstable_ops_guard_detects_cuda_grid_sample():
-    image = torch.zeros(1, 1, 4, 4, device="cuda")
-    grid = torch.zeros(1, 2, 2, 3, device="cuda")
-    with pytest.raises(RuntimeError, match="grid_sample"):
-        with detect_unstable_cuda_ops():
-            torch.nn.functional.grid_sample(image, grid, align_corners=False)
+    result = _run_cuda_script(
+        """
+        import torch
+        from foveacore.utils.seed import detect_unstable_cuda_ops
+
+        image = torch.zeros(1, 1, 4, 4, device="cuda")
+        grid = torch.zeros(1, 2, 2, 3, device="cuda")
+        try:
+            with detect_unstable_cuda_ops():
+                torch.nn.functional.grid_sample(image, grid, align_corners=False)
+        except RuntimeError as exc:
+            assert "grid_sample" in str(exc), exc
+        else:
+            raise AssertionError("비결정론 CUDA 연산이 감지되지 않았습니다.")
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+def test_gpu_determinism_cuda_integration_in_fresh_process():
+    result = _run_cuda_script(
+        """
+        import os
+        import torch
+
+        assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+        assert not torch.cuda.is_initialized()
+        from foveacore.utils.seed import is_gpu_deterministic, set_gpu_determinism
+
+        set_gpu_determinism()
+        torch.ones(1, device="cuda")
+        assert torch.cuda.is_initialized()
+        assert is_gpu_deterministic()
+        assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_assert_reproducible_accepts_equal_results():
     assert assert_reproducible(lambda x: x + 1, 2, repeats=3) == 3
+
+
+def test_assert_reproducible_accepts_stable_reused_buffers():
+    array = np.zeros(3, dtype=np.float32)
+
+    def numpy_operation():
+        array[...] = [1.0, 2.0, 3.0]
+        return array
+
+    tensor = torch.zeros(3)
+
+    def tensor_operation():
+        tensor.copy_(torch.tensor([1.0, 2.0, 3.0]))
+        return tensor
+
+    assert assert_reproducible(numpy_operation, repeats=3).tolist() == [1.0, 2.0, 3.0]
+    assert assert_reproducible(tensor_operation, repeats=3).tolist() == [1.0, 2.0, 3.0]
+
+
+def test_assert_reproducible_rejects_inplace_mutation():
+    array = np.zeros(3, dtype=np.float32)
+
+    def numpy_operation():
+        array[...] += 1
+        return array
+
+    tensor = torch.zeros(3)
+
+    def tensor_operation():
+        tensor.add_(1)
+        return tensor
+
+    with pytest.raises(NumericalInstabilityError, match="결정론적"):
+        assert_reproducible(numpy_operation, repeats=3)
+    with pytest.raises(NumericalInstabilityError, match="결정론적"):
+        assert_reproducible(tensor_operation, repeats=3)
 
 
 def test_assert_reproducible_rejects_changing_results():

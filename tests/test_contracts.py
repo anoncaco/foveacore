@@ -63,12 +63,38 @@ def test_freeze_dict_and_list_copies_mapping_proxy_input():
     assert frozen["items"][1]["x"] == 2
 
 
-def test_freeze_ndarray_is_readonly_defensive_copy():
+def test_freeze_ndarray_is_immutable_defensive_copy():
     source = np.array([1, 2, 3])
     frozen = _freeze(source)
     source[0] = 99
-    assert not frozen.flags.writeable
     assert frozen.tolist() == [1, 2, 3]
+
+    base = frozen
+    while isinstance(base, np.ndarray):
+        assert not base.flags.writeable
+        with pytest.raises(ValueError, match="WRITEABLE"):
+            base.setflags(write=True)
+        base = base.base
+    assert isinstance(base, bytes)
+
+    with pytest.raises(ValueError, match="read-only"):
+        frozen[0] = 77
+    assert frozen.tolist() == [1, 2, 3]
+
+
+def test_observation_ndarray_cannot_be_reactivated_for_writing():
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        features=np.arange(100, dtype=np.float32).reshape(1, 4, 5, 5),
+        provenance=_image_provenance(),
+    )
+    before = obs.to_dict()
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        obs.features.setflags(write=True)
+    with pytest.raises(ValueError, match="read-only"):
+        obs.features[0, 0, 0, 0] = -1
+    assert obs.to_dict() == before
 
 
 def test_image_observation_contract_and_strict_json_roundtrip():
@@ -91,6 +117,58 @@ def test_image_observation_contract_and_strict_json_roundtrip():
     data = obs.to_dict()
     payload = json.dumps(data, allow_nan=False)
     assert Observation.from_dict(json.loads(payload)).to_dict() == data
+
+
+def test_image_observation_accepts_chw_and_bchw_features():
+    cases = [
+        ("F3", 5, (4, 5, 5)),
+        ("F3", 5, (1, 4, 5, 5)),
+        ("F3_HIRES", 97, (4, 97, 97)),
+        ("F3_HIRES", 97, (2, 4, 97, 97)),
+    ]
+    for sensor_profile, grid_size, shape in cases:
+        obs = Observation(
+            modality="visual",
+            source_id="s1",
+            features=np.zeros(shape, dtype=np.float32),
+            provenance=_image_provenance(sensor_profile=sensor_profile, grid_size=grid_size),
+        )
+        assert obs.features.shape == shape
+
+
+@pytest.mark.parametrize(
+    ("sensor_profile", "grid_size", "shape"),
+    [
+        ("F3", 5, (1, 4, 97, 97)),
+        ("F3_HIRES", 97, (1, 4, 5, 5)),
+    ],
+)
+def test_image_observation_rejects_profile_feature_shape_mismatch(
+    sensor_profile, grid_size, shape
+):
+    with pytest.raises(ValueError, match="features 형상"):
+        Observation(
+            modality="visual",
+            source_id="s1",
+            features=np.zeros(shape, dtype=np.float32),
+            provenance=_image_provenance(sensor_profile=sensor_profile, grid_size=grid_size),
+        )
+
+
+def test_image_features_shape_is_validated_on_json_restore():
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        features=np.zeros((1, 4, 5, 5), dtype=np.float32),
+        provenance=_image_provenance(),
+    )
+    data = obs.to_dict()
+    data["features"] = {
+        "__numpy__": np.zeros((1, 4, 97, 97), dtype=np.float32).tolist(),
+        "dtype": "float32",
+    }
+    with pytest.raises(ValueError, match="features 형상"):
+        Observation.from_dict(data)
 
 
 def test_image_observation_rejects_missing_provenance():
@@ -145,7 +223,7 @@ def test_all_contracts_json_roundtrip():
         Observation(
             modality="visual",
             source_id="s1",
-            features=[1.0],
+            features=np.zeros((1, 4, 5, 5), dtype=np.float32),
             location=[[0, 0]],
             provenance=image_provenance,
         ),

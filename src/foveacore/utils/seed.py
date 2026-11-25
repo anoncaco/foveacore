@@ -27,6 +27,7 @@ DEFAULT_SEEDS = {
 _EXPECTED_CUBLAS = ":4096:8"
 _MAX_SEED = (1 << 64) - 1
 _SUPPORTED_RNG_KINDS = frozenset({"python", "numpy", "torch"})
+_GPU_RUNTIME_INITIALIZED = False
 
 
 def _validate_seed(name, value):
@@ -80,8 +81,27 @@ def ensure_cublas_before_cuda():
     return True
 
 
+def initialize_gpu_runtime(model_seed=None):
+    """운영 진입점 순서를 강제한다: cuBLAS 환경 → 결정론·정밀도 설정."""
+    ensure_cublas_before_cuda()
+    return set_gpu_determinism(model_seed)
+
+
+def ensure_gpu_runtime_initialized():
+    """GPU 정보 조회 전에 운영 초기화 완료와 설정 유효성을 검증한다."""
+    if not _GPU_RUNTIME_INITIALIZED:
+        raise RuntimeError(
+            "GPU 정보 수집 전에 initialize_gpu_runtime()로 운영 초기화를 완료해야 합니다(T2)."
+        )
+    failed = [name for name, value in gpu_determinism_status().items() if value is not True]
+    if failed:
+        raise RuntimeError(f"GPU 운영 초기화 설정이 유효하지 않습니다(T2): {failed}")
+    return True
+
+
 def set_gpu_determinism(model_seed=None):
     """GPU 결정론·FP32·TF32 차단을 강제하고 적용 결과를 검증한다."""
+    global _GPU_RUNTIME_INITIALIZED
     import torch
 
     model_seed = _validate_seed("model_seed", DEFAULT_SEEDS["model_seed"] if model_seed is None else model_seed)
@@ -103,6 +123,7 @@ def set_gpu_determinism(model_seed=None):
     failed = [name for name, value in status.items() if value is not True]
     if failed:
         raise RuntimeError(f"GPU 결정론 적용 검증 실패(T2): {failed}")
+    _GPU_RUNTIME_INITIALIZED = True
     return True
 
 
@@ -208,6 +229,10 @@ def assert_reproducible(operation, *args, repeats=2, **kwargs):
     if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 2:
         raise ValueError("repeats는 2 이상의 정수여야 합니다.")
     baseline = operation(*args, **kwargs)
+    if isinstance(baseline, torch.Tensor):
+        baseline = baseline.detach().clone()
+    elif isinstance(baseline, np.ndarray):
+        baseline = baseline.copy()
     for _ in range(repeats - 1):
         current = operation(*args, **kwargs)
         if isinstance(baseline, torch.Tensor):
@@ -223,6 +248,12 @@ def assert_reproducible(operation, *args, repeats=2, **kwargs):
 
 # 용도별 독립 RNG 보관소(T2).
 _INDEPENDENT_RNGS = {}
+_APPLIED_SEEDS = dict(DEFAULT_SEEDS)
+
+
+def get_applied_seeds():
+    """마지막으로 성공한 apply_seeds()의 정규화된 시드 복사본을 반환한다."""
+    return dict(_APPLIED_SEEDS)
 
 
 def create_rng(kind, seed):
@@ -266,4 +297,6 @@ def apply_seeds(seeds=None):
     torch.manual_seed(merged["model_seed"])
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(merged["model_seed"])
+    global _APPLIED_SEEDS
+    _APPLIED_SEEDS = dict(merged)
     return merged

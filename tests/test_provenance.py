@@ -5,9 +5,71 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import torch
 
-from foveacore.utils import provenance
+from foveacore.utils import provenance, seed as seed_utils
 from foveacore.utils.provenance import collect_provenance, get_git_commit, is_git_dirty
+from foveacore.utils.seed import DEFAULT_SEEDS, apply_seeds
+
+
+@pytest.fixture(autouse=True)
+def operational_runtime():
+    seed_utils.initialize_gpu_runtime()
+    yield
+
+
+def test_collect_provenance_rejects_reversed_order_before_torch_query(monkeypatch):
+    monkeypatch.setattr(seed_utils, "_GPU_RUNTIME_INITIALIZED", False)
+
+    def unexpected_torch_query():
+        raise AssertionError("운영 초기화 전에 Torch/CUDA 조회가 발생했습니다.")
+
+    monkeypatch.setattr(provenance, "_torch", unexpected_torch_query)
+    with pytest.raises(RuntimeError, match="운영 초기화"):
+        collect_provenance()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+def test_gpu_operational_order_in_fresh_process(run_fresh_python):
+    normal = run_fresh_python(
+        """
+        import os
+        import torch
+        from foveacore.utils.provenance import collect_provenance
+        from foveacore.utils.seed import initialize_gpu_runtime
+
+        assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+        assert not torch.cuda.is_initialized()
+        initialize_gpu_runtime()
+        manifest = collect_provenance()
+        assert manifest["cublas_workspace_config"] == ":4096:8"
+        assert manifest["deterministic_mode"] is True
+        assert manifest["cuda_available"] is True
+        assert manifest["gpu_name"]
+        assert torch.cuda.is_initialized()
+        """
+    )
+    assert normal.returncode == 0, normal.stdout + normal.stderr
+
+    reversed_order = run_fresh_python(
+        """
+        import os
+        import torch
+        from foveacore.utils.provenance import collect_provenance
+
+        assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+        assert not torch.cuda.is_initialized()
+        try:
+            collect_provenance()
+        except RuntimeError as exc:
+            assert "운영 초기화" in str(exc), exc
+        else:
+            raise AssertionError("순서가 뒤집힌 provenance 수집이 성공했습니다.")
+        assert not torch.cuda.is_initialized()
+        assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+        """
+    )
+    assert reversed_order.returncode == 0, reversed_order.stdout + reversed_order.stderr
 
 
 def test_collect_provenance_required_keys():
@@ -28,6 +90,28 @@ def test_seeds_present():
     assert set(p["seeds"].keys()) == {
         "split_seed", "episode_seed", "generator_seed", "model_seed", "stream_order_seed",
     }
+
+
+def test_collect_provenance_reads_last_applied_seeds():
+    expected = dict(DEFAULT_SEEDS, model_seed=88)
+    apply_seeds({"model_seed": 88})
+    assert collect_provenance()["seeds"] == expected
+    assert collect_provenance({"model_seed": 88})["seeds"] == expected
+
+
+@pytest.mark.parametrize(
+    ("seeds", "error"),
+    [
+        ({"unknown_seed": 1}, ValueError),
+        ({"model_seed": "88"}, TypeError),
+        ({"model_seed": 89}, ValueError),
+        ([1, 2], TypeError),
+    ],
+)
+def test_collect_provenance_rejects_non_applied_seeds(seeds, error):
+    apply_seeds({"model_seed": 88})
+    with pytest.raises(error):
+        collect_provenance(seeds)
 
 
 def test_dependency_lock_hash_present():

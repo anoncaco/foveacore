@@ -144,6 +144,30 @@ def make_image_provenance(
     return provenance
 
 
+def _validate_image_features(features, sensor_profile):
+    """이미지 features가 CHW 또는 BCHW이고 프로파일 형상과 일치하는지 검증한다."""
+    if features is None:
+        return
+    if isinstance(features, ImmutableTensor):
+        shape = tuple(features.tensor().shape)
+    else:
+        try:
+            shape = tuple(np.shape(features))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "이미지 Observation features는 CHW 또는 BCHW 배열이어야 합니다."
+            ) from exc
+    if len(shape) == 4:
+        shape = shape[1:]
+    elif len(shape) != 3:
+        raise ValueError(f"이미지 Observation features는 CHW 또는 BCHW여야 합니다: {shape}")
+    contract = SENSOR_PROFILE_CONTRACTS[sensor_profile]
+    if shape != contract.feature_shape:
+        raise ValueError(
+            f"features 형상 불일치: {sensor_profile}은 {contract.feature_shape}이어야 합니다({shape})."
+        )
+
+
 def validate_unit_coordinates(value, name="location"):
     """이미지 좌표의 모든 숫자 값이 [0, 1] 범위인지 검증한다."""
     if value is None:
@@ -169,23 +193,28 @@ def validate_unit_coordinates(value, name="location"):
     raise ValueError(f"{name} 좌표는 숫자 또는 중첩 시퀀스여야 합니다: {value!r}")
 
 
+def _immutable_ndarray(value):
+    """숫자 배열을 불변 bytes 버퍼로 복사해 쓰기 재활성화를 차단한다."""
+    if value.dtype.hasobject:
+        arr = value.copy()
+        arr.setflags(write=False)
+        return arr
+    return np.frombuffer(value.tobytes(order="C"), dtype=value.dtype).reshape(value.shape)
+
+
 def _freeze(obj):
     """내부 데이터를 방어 복사하고 불변 형태로 변환한다."""
     if isinstance(obj, Mapping):
         if "__numpy__" in obj and set(obj) <= {"__numpy__", "dtype"}:
             arr = np.array(obj["__numpy__"], dtype=obj.get("dtype"))
-            arr = arr.copy()
-            arr.setflags(write=False)
-            return arr
+            return _immutable_ndarray(arr)
         if "__tensor__" in obj and set(obj) == {"__tensor__"}:
             return ImmutableTensor.from_dict(obj["__tensor__"])
         return MappingProxyType({k: _freeze(v) for k, v in obj.items()})
     if isinstance(obj, (list, tuple)):
         return tuple(_freeze(v) for v in obj)
     if isinstance(obj, np.ndarray):
-        arr = obj.copy()
-        arr.setflags(write=False)
-        return arr
+        return _immutable_ndarray(obj)
     if isinstance(obj, torch.Tensor):
         return ImmutableTensor(obj)
     if isinstance(obj, _SerializableContract):
@@ -332,6 +361,8 @@ class Observation(_SerializableContract):
         object.__setattr__(self, "features", _freeze(self.features))
         object.__setattr__(self, "observed_mask", _freeze(self.observed_mask))
         object.__setattr__(self, "provenance", _freeze(self.provenance))
+        if self.modality.lower() in _IMAGE_MODALITIES:
+            _validate_image_features(self.features, self.provenance["sensor_profile"])
 
 
 @dataclass(frozen=True)
