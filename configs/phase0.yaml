@@ -34,6 +34,7 @@ splits_synthetic:
 
 # 수량 통일: quick_smoke(1~3 에피소드), phase0_full_smoke(30 에피소드), 10-way 1-shot, n_query_per_class=20
 smoke:
+  scope: phase0_full_smoke
   quick_episodes: 3
   full_episodes: 30
   way: 10

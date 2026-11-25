@@ -76,7 +76,8 @@ def validate_image_provenance(provenance):
     missing = required - set(provenance)
     if missing:
         raise ValueError(f"이미지 provenance 필수 키 누락: {sorted(missing)}")
-
+    if "stroke_clue_available" in provenance:
+        raise ValueError("provenance에 stroke_clue_available를 포함할 수 없습니다(T2).")
     _positive_hw(provenance["original_hw"], "original_hw")
     _positive_hw(provenance["processed_hw"], "processed_hw")
     profile_id = provenance["preprocess_profile_id"]

@@ -115,6 +115,7 @@ def test_unknown_sensor_profile_is_error():
 
 def test_smoke_way_must_be_10():
     cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "phase0_full_smoke"
     cfg["smoke"]["way"] = 5
     errors = validate_phase0_config(cfg)
     assert any("smoke.way" in error for error in errors)
@@ -150,6 +151,56 @@ def test_stroke_clue_available_missing():
 
 def test_strict_1shot_3way_passes():
     cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "general"
     cfg["datasets"]["support_per_episode"] = 3
     cfg["smoke"]["way"] = 3
     assert validate_phase0_config(cfg) == []
+
+
+def test_official_scope_way_and_support_both_5_rejected():
+    cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "phase0_full_smoke"
+    cfg["smoke"]["way"] = 5
+    cfg["datasets"]["support_per_episode"] = 5
+    errors = validate_phase0_config(cfg)
+    assert any("smoke.way" in error for error in errors)
+    assert any("support_per_episode" in error for error in errors)
+
+
+def test_official_scope_support_only_5_rejected():
+    cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "phase0_full_smoke"
+    cfg["datasets"]["support_per_episode"] = 5
+    errors = validate_phase0_config(cfg)
+    assert any("support_per_episode" in error for error in errors)
+
+
+def test_general_scope_3way_passes():
+    cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "general"
+    cfg["datasets"]["support_per_episode"] = 3
+    cfg["smoke"]["way"] = 3
+    assert validate_phase0_config(cfg) == []
+
+
+def test_general_scope_5way_passes():
+    cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = "general"
+    cfg["datasets"]["support_per_episode"] = 5
+    cfg["smoke"]["way"] = 5
+    assert validate_phase0_config(cfg) == []
+
+
+def test_smoke_scope_missing_is_error():
+    cfg = _load_valid_config()
+    del cfg["smoke"]["scope"]
+    errors = validate_phase0_config(cfg)
+    assert any("smoke.scope" in error for error in errors)
+
+
+@pytest.mark.parametrize("value", [[], 1, "unknown", None])
+def test_smoke_scope_invalid_value_is_error(value):
+    cfg = _load_valid_config()
+    cfg["smoke"]["scope"] = value
+    errors = validate_phase0_config(cfg)
+    assert any("smoke.scope" in error for error in errors)

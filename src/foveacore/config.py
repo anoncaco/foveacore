@@ -48,11 +48,14 @@ REQUIRED_DATASET_KEYS = {
 REQUIRED_SYNTHETIC_KEYS = {"train", "dev", "test"}
 
 REQUIRED_SMOKE_KEYS = {
+    "scope",
     "quick_episodes",
     "full_episodes",
     "way",
     "n_query_per_class",
 }
+
+ALLOWED_SMOKE_SCOPES = {"phase0_full_smoke", "general"}
 
 
 def load_phase0_config(path):
@@ -191,12 +194,29 @@ def validate_phase0_config(cfg):
                 errors.append("datasets.support_per_episode가 양의 정수가 아닙니다.")
             elif cfg["experiment_protocol"] == "STRICT_1SHOT":
                 smoke_cfg = cfg.get("smoke") if isinstance(cfg.get("smoke"), dict) else {}
+                scope = smoke_cfg.get("scope") if isinstance(smoke_cfg, dict) else None
                 smoke_way = smoke_cfg.get("way") if isinstance(smoke_cfg, dict) else None
-                if isinstance(smoke_way, int) and not isinstance(smoke_way, bool) and v != smoke_way:
-                    errors.append(
-                        "STRICT_1SHOT에서 support_per_episode는 smoke.way와 일치해야 합니다. "
-                        "(MNIST 공식 10-way에서는 10이어야 함)"
-                    )
+                smoke_way_is_int = isinstance(smoke_way, int) and not isinstance(smoke_way, bool)
+                if scope == "phase0_full_smoke":
+                    if v != 10:
+                        errors.append(
+                            "STRICT_1SHOT 공식 full smoke(scope=phase0_full_smoke)에서 "
+                            "datasets.support_per_episode는 10이어야 합니다 "
+                            "(MNIST 공식 full smoke 요구)."
+                        )
+                elif scope == "general":
+                    if smoke_way_is_int and v != smoke_way:
+                        errors.append(
+                            "STRICT_1SHOT scope=general에서 "
+                            "datasets.support_per_episode는 smoke.way와 일치해야 합니다."
+                        )
+                else:
+                    # scope가 유효하지 않으면 smoke 쪽 검증에서 이미 오류를 보고한다.
+                    if smoke_way_is_int and v != smoke_way:
+                        errors.append(
+                            "STRICT_1SHOT에서 datasets.support_per_episode는 "
+                            "smoke.way와 일치해야 합니다."
+                        )
         for stream_key in ("dev_stream", "main_stream"):
             v = datasets.get(stream_key)
             if v is not None and not _is_pos_int(v):
@@ -235,26 +255,21 @@ def validate_phase0_config(cfg):
         for key in sorted(REQUIRED_SMOKE_KEYS):
             if key not in smoke:
                 errors.append(f"smoke.{key} 누락")
+        scope = smoke.get("scope")
+        if not isinstance(scope, str) or scope not in ALLOWED_SMOKE_SCOPES:
+            errors.append(
+                f"smoke.scope 부적절: {scope!r} "
+                f"(허용: {sorted(ALLOWED_SMOKE_SCOPES)})"
+            )
         way = smoke.get("way")
         if not _is_pos_int(way):
             errors.append("smoke.way가 양의 정수가 아닙니다.")
         else:
-            datasets_cfg = cfg.get("datasets") if isinstance(cfg.get("datasets"), dict) else {}
-            mnist_train = datasets_cfg.get("mnist_train")
-            mnist_test = datasets_cfg.get("mnist_test")
-            full_episodes = smoke.get("full_episodes")
-            n_query_per_class = smoke.get("n_query_per_class")
-            support_per_episode = datasets_cfg.get("support_per_episode")
-            is_official_full_smoke = (
-                mnist_train == 60000
-                and mnist_test == 10000
-                and full_episodes == 30
-                and n_query_per_class == 20
-                and support_per_episode == 10
-            )
-            if is_official_full_smoke and way != 10:
+            # MNIST 데이터 수량·full_episodes·n_query 고정 검증은 별도로 유지한다.
+            if cfg.get("experiment_protocol") == "STRICT_1SHOT" and scope == "phase0_full_smoke" and way != 10:
                 errors.append(
-                    "smoke.way은 MNIST 공식 full smoke 조건에서 10이어야 합니다."
+                    "STRICT_1SHOT 공식 full smoke(scope=phase0_full_smoke)에서 "
+                    "smoke.way는 10이어야 합니다 (MNIST 공식 full smoke 요구)."
                 )
         nq = smoke.get("n_query_per_class")
         if not _is_pos_int(nq):

@@ -564,3 +564,31 @@ def test_make_image_provenance_rejects_stroke_clue_duplicate():
             sensor_profile="F3",
             stroke_clue_available=True,
         )
+
+
+@pytest.mark.parametrize("sensor_profile,grid_size", [("F3", 5), ("F3_HIRES", 97)])
+@pytest.mark.parametrize("value", [False, True])
+def test_observation_rejects_provenance_stroke_clue_available(sensor_profile, grid_size, value):
+    provenance = dict(_image_provenance(sensor_profile=sensor_profile, grid_size=grid_size))
+    provenance["stroke_clue_available"] = value
+    with pytest.raises(ValueError):
+        Observation(modality="visual", source_id="s1", provenance=provenance)
+
+
+@pytest.mark.parametrize("sensor_profile,grid_size", [("F3", 5), ("F3_HIRES", 97)])
+@pytest.mark.parametrize("value", [False, True])
+def test_observation_from_dict_rejects_provenance_stroke_clue_available(sensor_profile, grid_size, value):
+    base = Observation(
+        modality="visual",
+        source_id="s1",
+        provenance=_image_provenance(sensor_profile=sensor_profile, grid_size=grid_size),
+    )
+    data = base.to_dict()
+    data["provenance"]["stroke_clue_available"] = value
+    with pytest.raises(ValueError):
+        Observation.from_dict(data)
+
+
+def test_non_image_observation_unaffected_by_stroke_clue_provenance():
+    obs = Observation(modality="text", source_id="s1", provenance={"stroke_clue_available": False})
+    assert obs.provenance["stroke_clue_available"] is False
