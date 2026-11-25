@@ -74,7 +74,7 @@
 - **MNIST 확보 방식:** 최초 1회 다운로드 또는 기존 로컬 캐시를 사용하되, 원천 파일 **SHA-256 체크섬 검증 후 `data/raw/`에 로컬 고정**.
 - **입력 경계 조건 검증:**
   - shape `(28, 28)` (또는 `(1, 28, 28)` 정규화), 모든 원소 `np.isfinite()` 충족, 값 범위 검증(`uint8 [0, 255]` → `[0.0, 1.0] float32`, 이미 float인 경우 `[0.0, 1.0]` 범위 확인; 범위 이탈 시 `ValueError`).
-  - `STRICT_1SHOT` 지원 집합은 정확히 클래스 `0~9` 각 1장(총 10장)임을 검증.
+  - MNIST 공식 10-way 실험 및 smoke 설정의 `STRICT_1SHOT` 지원 집합은 $C=\{0,\dots,9\}$, 각 개념 1장(총 10장)임을 검증. 공통 `STRICT_1SHOT`은 에피소드가 선언한 $C$의 각 개념에 지원 예시가 정확히 1개인지 검증.
 - **B0 (`Pixel 1-NN`):** 784차원 평탄화 벡터를 L2 정규화 후 유클리드 거리($\|\hat{x}_q - \hat{x}_s\|_2$) 계산.
   - **영벡터 경계 처리:** `norm < 1e-12`인 영벡터는 나눗셈(`0/0 -> NaN`)을 금지하고, 둘 다 영벡터면 거리 `0.0`, 한쪽만 영벡터면 단위구 최대 유클리드 거리 `2.0`을 반환.
 - **B1 (`HOG + 1-NN`):** 단일 구현체로 **`scikit-image` (`skimage.feature.hog`)**를 확정하고 `locks/phase0_requirements.lock`에 버전을 고정.
@@ -140,7 +140,11 @@
 - **의존성 잠금 파일 생성:** `pip freeze > locks/phase0_requirements.lock`으로 현재 GPU/CUDA 환경 의존성 버전을 Git으로 추적·고정하고, `dependency_lock_hash`는 이 lock 파일의 SHA-256으로 산출
 
 ### `T1` — 패키지 골격, CLI 및 Git 추적 명확화 (`0.1`)
-- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현 (`input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.grid_size=5`, `sensor.channels=4`, `sensor.profile=F3`는 **센서 계약 설정값**으로 선등록; 고해상도 `grid_size=97`는 별도 프로파일로 관리)
+- `configs/phase0.yaml` 작성 및 스키마 유효성 검증기 구현:
+  - `input.max_side=1024`, `input.resize_method=adaptive_average`, `sensor.grid_size=5`, `sensor.channels=4`, `sensor.profile=F3`는 **센서 계약 설정값**으로 선등록하고, 고해상도 `grid_size=97`은 별도 프로파일로 관리합니다.
+  - `SENSOR_PROFILES`에 프로파일별 `stroke_clue_available` 불리언을 선언하고, `REQUIRED_SENSOR_KEYS` 및 YAML의 `sensor` 필드와 연결합니다. 선택한 프로파일의 선언값과 YAML 값이 일치해야 합니다.
+  - `test_config.py`에서 정상 불리언, 문자열 `"false"` 같은 잘못된 타입, 선택한 프로파일과의 값 불일치를 검사합니다.
+  - `support_per_episode == 10` 검증은 **MNIST 공식 설정**에만 적용합니다. 공식 MNIST smoke의 `smoke.way == 10` 검사는 유지하되, 일반 `STRICT_1SHOT` 3-way 설정은 `support_per_episode == 3`을 통과해야 합니다. 코드 조건과 오류 메시지에도 `support_per_episode == 10`이 MNIST 공식 설정 요구임을 명시합니다.
 - `src/foveacore/__main__.py` CLI 진입점 구현 (`validate`, `build-splits`, `smoke-baseline`)
 - `git_dirty` 판정 기준 명문화: `git status --porcelain` 기준으로 `src/`, `configs/`, `locks/`, `pyproject.toml` 내 수정·미추적(untracked) 파일 존재 시 `git_dirty = True`
 - 금지 패키지(`transformers`, `openai`, `anthropic`, `llama_cpp`, `vllm`, `langchain` 등) 미설치/미임포트 검증 테스트
@@ -154,6 +158,9 @@
 - `utils/provenance.py`: OS/CPU/GPU(`gpu_name`)/CUDA(`cuda_version`)/cuDNN(`cudnn_version`)/PyTorch(`torch_version`)/정밀도(`precision`, `allow_tf32`)/결정론 설정/스레드/Git/패키지 수집
 - `core/exceptions.py` (또는 `core/contracts.py`): 명시적 `NumericalInstabilityError` 정의(`assert`는 `python -O`에서 무시되므로 수치 검증에 사용 금지)
 - `core/contracts.py`: 이미지 Observation provenance의 `original_hw`, `processed_hw`, `preprocess_profile_id`, `[0,1]` 좌표 및 `sensor_profile/grid_size`를 추가하고 기본/확장 격자 프로파일을 서로 호환 불가한 별개 버전으로 관리합니다.
+  - `SensorProfileContract`에 `stroke_clue_available: bool` 필드를 추가하고, 값을 T1의 `SENSOR_PROFILES`에서 가져옵니다.
+  - 기존 조회 경로인 `SENSOR_PROFILE_CONTRACTS[obs.provenance["sensor_profile"]].stroke_clue_available`로 선언을 읽을 수 있게 하며, 관측별 provenance에 값을 복제하지 않습니다.
+  - `test_contracts.py`에서 Observation 직렬화·복원 후에도 위 경로로 동일한 불리언이 조회되는지 검증합니다.
 - `core/contracts.py`: `v1.9.3` 부록 1의 6대 인터페이스(`Observation`, `Action`, `Structure`, `Hypothesis`, `Prediction`, `Memory`) 정의
   - **내부 데이터·Tensor·버퍼 불변성 보호:**
     - `dict` → `MappingProxyType`, `list` → `tuple`, `np.ndarray` → `setflags(write=False)`
@@ -194,8 +201,8 @@ flowchart LR
   - `PretrainingPolicy`: `P0`, `P1`, `P2`, `P3`
   - **금지 조합 차단 예시:**
     - `(STRICT_1SHOT, P3)` → `PolicyConflictError` (엄격 1-shot에 숫자 사전학습 불가)
-    - `(STRICT_1SHOT, ADAPT, dev_stream/main_stream)` → 차단 (10장 외 숫자 학습·보정 금지)
-    - `(CONTINUAL/REFERENCE_P3)` 외 모드에서 `11`번째 실제 숫자 투입 → `OneShotBudgetExceededError`
+    - `(STRICT_1SHOT, ADAPT, dev_stream/main_stream)` → 차단 (선언된 $C$ 외 support 접근·학습·보정 금지)
+    - 선언된 $C$ 외 개념 support 접근 → `OneShotBudgetExceededError` (MNIST 공식 10-way 설정에서는 `11`번째 실제 숫자 투입을 대표 검증 사례로 사용)
     - `(P1, digit_template)` → `PretrainingLeakError`
     - `(REFERENCE_P3)` → `eligible_for_h1_h6 = False` 강제
 - **모델 버퍼 및 전체 상태 불변성 검사 (`ReadOnlyInferenceGuard`):**
@@ -206,10 +213,10 @@ flowchart LR
   - **초기 스냅샷 복원 (`restore_initial_snapshot()`):** 에피소드 시작 전 반드시 초기 상태 스냅샷(모델 파라미터·버퍼·기억)을 복원하고 `state_hash == initial_snapshot_hash`를 검증.
   - **미래 데이터 차단 커서 (`BoundedStreamCursor`):** 에피소드/스트림 데이터는 현재 인덱스 `t` 이하 항목만 반환하며 `t+k` 선조회(`peek`/직접 인덱싱) 시도 시 `FutureDataAccessError` 발생.
 - **에피소드 생성기 및 Smoke 수량 통일:**
-  - 10,000장 Support pool 전체 전달 차단, 에피소드당 정확히 10장(`0~9` 각 1장), `Support ∩ Query == ∅`.
+  - 10,000장 Support pool 전체 전달 차단, 에피소드가 선언한 $C$의 각 개념당 정확히 1장, `Support ∩ Query == ∅`. 예: 3-way에서 총 3장이어도 A,A,B이면 $C$가 빠졌으므로 실패.
   - **Smoke Test 수량 통일:**
     - `quick_smoke` (단위·CI 테스트): `1~3` 에피소드(또는 소형 비숫자 fixture)
-    - `phase0_full_smoke` (Phase 0 완료 기준): 고정 `episode_seed`로 **`30` 에피소드** (`10-way 1-shot`, `n_query_per_class=20`, 에피소드당 200 Query) 생성·실행 (단, 무튜닝 배선 검증 전용).
+    - `phase0_full_smoke` (Phase 0 완료 기준, **MNIST 공식 smoke 설정**): $C=\{0,\dots,9\}$인 10-way 1-shot으로 고정 `episode_seed`에서 **`30` 에피소드** (`n_query_per_class=20`, 에피소드당 200 Query) 생성·실행 (단, 무튜닝 배선 검증 전용).
 
 - **센서 인수 조건:** T4의 `BlindSample`과 향후 Phase 1 센서만 전처리 이미지에 접근하는 역할을 분리합니다. T4 에피소드/스트림은 전처리 프로파일·시선 좌표 변환을 메타데이터에 기록하며 전체 처리 이미지를 모델 임베딩에 우회 전달하지 않습니다.
 
@@ -231,6 +238,7 @@ flowchart LR
 ### `T7` — Manifest·산출물 계약·5종 Seed·실패 복구 (`0.9`)
 - **표준 산출물 디렉토리 (`artifacts/<run_id>/`, 부록 5 준수):**
   `manifest.json`, `config.yaml`, `metrics.csv`, `summary.json`, `traces/inference.jsonl`, `traces/learning.jsonl` (및 해당 시 `memory.json`, `checkpoint.pt`).
+- **`inference.jsonl` 종료 사유 계약:** `stop_reason`은 상위 v1.9.3 계획서의 네 가지 값(판정 완료 / 관측 소진 / 추가 이득 부족 / 실험 상한)을 사용한다. B0/B1처럼 능동 탐색 루프가 없는 실행은 `N/A`로 기록하며, 정상 실행 완료를 적응형 Stop 성공으로 집계하지 않는다.
 - **`manifest.json` 전체 필수 필드 계약 (`v1.9.3` 부록 4 + 5종 시드 + GPU/CUDA/정밀도/추적 완전 통합):**
   - **기본/버전:** `run_id`, `schema_version`, `run_status`(`"SUCCESS"` | `"FAILED"`), `failure_reason`, `config_hash`, `freeze_manifest_hash`, `data_split_hash`
   - **에피소드/데이터:** `episode_id`, `support_ids`, `query_ids`, `dataset_version`, `dataset_checksum`, `pretraining_source`, `experiment_protocol`, `pretraining_policy`
@@ -248,7 +256,7 @@ flowchart LR
   - **엄격 1-shot (`STRICT_1SHOT`):** **숫자 개발 데이터(`dev_stream`)로 임계값·하이퍼파라미터 보정 절대 금지.** 오직 **비숫자(`non_digit_dev`) 또는 합성 dev 분할**만 보정에 사용.
   - **`dev_stream`:** Phase 5/6의 **지속 학습(`CONTINUAL`) 스트림 개발** 전용.
   - **Phase 0 Smoke Test:** `quick_smoke`(1~3 에피소드) 및 `phase0_full_smoke`(30 에피소드) 모두 **파이프라인 배선·해시·자원 계측 확인 전용**이며 수치 기반 모델 개선·보정을 수행하지 않음.
-- `experiments/preregistration_v1.9.3.md` 확정 및 `evaluation/statistics.py` 단위 테스트(MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 차단, 입력 예외·`σ=0` 방어).
+- `experiments/preregistration_v1.9.3.md` 확정 및 `evaluation/statistics.py` 단위 테스트(MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 차단, 입력 예외·`σ=0` 방어). 사전등록에는 H1(양쪽 모두 10스텝·Stop 비활성화)과 H6(적응형 Stop의 실제 관측 수·FLOPs 절감) 비교 정의를 명시적으로 참조한다.
 
 ---
 
@@ -272,7 +280,7 @@ flowchart LR
 
 1. **저장소·환경 무결성 (`T0/T1`):** `pip install -e .` 후 `import foveacore` 작동, GPU/CUDA 포함 `locks/phase0_requirements.lock` 추적, LLM/텍스트 라이브러리 미설치 확인, `README.md` `v1.9.3` 정합.
 2. **데이터 격리·봉인·외부 분할 규칙 (`T3`):** 분할 간 ID·SHA-256 중복 0건, OOD·Phase 7 전이 disjoint 규칙 검증기 동작, `freeze_manifest.json` canonical 해시 + 독립 기준점 + 내부 교차 해시 검증, `Phase 0~5` 봉인 차단 확인.
-3. **정책 결합 & 미래 차단 (`T4`):** `PolicyCompatibilityValidator` 모순 조합(`(STRICT_1SHOT, P3)` 등) 차단, `STRICT_1SHOT` 11번째 숫자 차단 및 숫자 dev 보정 차단, 에피소드 초기 스냅샷 복원, 미래 데이터 선조회 차단 검증.
+3. **정책 결합 & 미래 차단 (`T4`):** `PolicyCompatibilityValidator` 모순 조합(`(STRICT_1SHOT, P3)` 등) 차단, 선언된 $C$ 외 support 접근 차단, MNIST 공식 사례 11번째 숫자 차단 및 숫자 dev 보정 차단, 에피소드 초기 스냅샷 복원, 미래 데이터 선조회 차단 검증.
 4. **전체 상태 불변·라벨 권한 (`T2/T4`):** `INFER` 중 `parameters()`·`buffers()`·`memory`·`eval()` 및 `torch.Tensor` 방어 복사/변이 차단, `ADAPT`의 공식 평가/미확정 query 라벨 조회 차단, 확정 전 라벨 차단 통과.
 5. **GPU 결정론·분리된 재현성 검증 (`T2/T5`):** `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `deterministic_algorithms`, FP32(TF32 차단) 활성 및 동일 `gpu_name`·`cuda_version`·`precision` 환경에서 동일 시드 2회 실행 시 에피소드 ID·예측 클래스 완전 일치, 부동소수점 지표 `atol=1e-6` 이내 일치, `torch.cuda.synchronize()` + 워밍업 지연/`Peak VRAM`/`Peak RAM` 분포 기록 확인.
 6. **B0/B1 Smoke Test (`T5/T8`):** `quick_smoke`(1~3 에피소드) 및 `phase0_full_smoke`(고정 시드 **`30` 에피소드**, **`10-way 1-shot`**, `n_query_per_class=20`)에서 `B0` 및 `B1`(`scikit-image`)이 보정/튜닝 없이 정상 실행·경계 조건(`NaN` 0건) 통과.
@@ -281,4 +289,4 @@ flowchart LR
 9. **통계 판정 및 예외 처리 (`T8`):** MECE 4단계, `H13-V`, `TECHNICAL_FAIL → DEFERRED`, `REFERENCE_P3` 배제, `n<2`·`σ=0`·`NaN`·`MDE<=0` 예외 처리 단위 테스트 전수 통과.
 10. **사전등록 완료 (`T8`):** `experiments/preregistration_v1.9.3.md` 확정 및 `python -m foveacore validate --config configs/phase0.yaml` 최종 PASS.
 
-**Phase 1 센서 인수용 추가 계약 테스트(Phase 0에서는 스키마/fixture만):** `28×28`·`56×56` 무변형, `640×480`·`800×1000` 무업스케일, `4096×3072`·`3072×4096`·`1920×1080`의 예상 결과 크기, 1픽셀 축, `(x,y)` 좌표 왕복, 채널 4개 및 유효비율 범위, 마스크 기반 평균의 빈 bin 처리, F4 3×3→5×5 정렬, 원본/전처리 해시·프로파일 기록. **실제 GPU 풀링/센서 본체의 PASS는 Phase 1 게이트**로 유지합니다.
+**Phase 1 센서 인수용 추가 계약 테스트(Phase 0에서는 스키마/fixture만):** `28×28`·`56×56` 무변형, `640×480`·`800×1000` 무업스케일, `4096×3072`·`3072×4096`·`1920×1080`의 예상 결과 크기, 1픽셀 축, `(x,y)` 좌표 왕복, 채널 4개 및 유효비율 범위, 마스크 기반 평균의 빈 bin 처리, F4 3×3→5×5 정렬, 원본/전처리 해시·프로파일 기록, `stroke_clue_available` 프로파일 선언 및 Observation 조회, MNIST 공식 10-way와 일반 3-way `STRICT_1SHOT` 설정 검증. **실제 GPU 풀링/센서 본체의 PASS는 Phase 1 게이트**로 유지합니다.

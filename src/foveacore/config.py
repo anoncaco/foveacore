@@ -12,12 +12,12 @@ ALLOWED_RESIZE_METHODS = {"adaptive_average"}
 # 기본 F3 계약과 고해상도 확장 프로파일을 분리한다.
 # grid_size/channels는 프로파일과 반드시 일치해야 한다.
 SENSOR_PROFILES = {
-    "F3": {"grid_size": 5, "channels": 4},
-    "F3_HIRES": {"grid_size": 97, "channels": 4},
+    "F3": {"grid_size": 5, "channels": 4, "stroke_clue_available": True},
+    "F3_HIRES": {"grid_size": 97, "channels": 4, "stroke_clue_available": True},
 }
 
 REQUIRED_INPUT_KEYS = {"max_side", "resize_method"}
-REQUIRED_SENSOR_KEYS = {"profile", "grid_size", "channels"}
+REQUIRED_SENSOR_KEYS = {"profile", "grid_size", "channels", "stroke_clue_available"}
 
 REQUIRED_KEYS = {
     "version",
@@ -134,6 +134,7 @@ def validate_phase0_config(cfg):
             expected = SENSOR_PROFILES[profile]
             grid_size = sensor.get("grid_size")
             channels = sensor.get("channels")
+            stroke_clue_available = sensor.get("stroke_clue_available")
             if not _is_pos_int(grid_size):
                 errors.append("sensor.grid_size가 양의 정수가 아닙니다.")
             elif grid_size != expected["grid_size"]:
@@ -147,6 +148,13 @@ def validate_phase0_config(cfg):
                 errors.append(
                     f"sensor.channels는 {profile} 프로파일에서 "
                     f"{expected['channels']}이어야 합니다."
+                )
+            if not isinstance(stroke_clue_available, bool):
+                errors.append("sensor.stroke_clue_available가 bool이어야 합니다.")
+            elif stroke_clue_available != expected["stroke_clue_available"]:
+                errors.append(
+                    f"sensor.stroke_clue_available는 {profile} 프로파일에서 "
+                    f"{expected['stroke_clue_available']}이어야 합니다."
                 )
 
     # datasets
@@ -181,8 +189,14 @@ def validate_phase0_config(cfg):
             v = datasets.get("support_per_episode")
             if not _is_pos_int(v):
                 errors.append("datasets.support_per_episode가 양의 정수가 아닙니다.")
-            elif cfg["experiment_protocol"] == "STRICT_1SHOT" and v != 10:
-                errors.append("STRICT_1SHOT에서 support_per_episode는 10이어야 합니다.")
+            elif cfg["experiment_protocol"] == "STRICT_1SHOT":
+                smoke_cfg = cfg.get("smoke") if isinstance(cfg.get("smoke"), dict) else {}
+                smoke_way = smoke_cfg.get("way") if isinstance(smoke_cfg, dict) else None
+                if isinstance(smoke_way, int) and not isinstance(smoke_way, bool) and v != smoke_way:
+                    errors.append(
+                        "STRICT_1SHOT에서 support_per_episode는 smoke.way와 일치해야 합니다. "
+                        "(MNIST 공식 10-way에서는 10이어야 함)"
+                    )
         for stream_key in ("dev_stream", "main_stream"):
             v = datasets.get(stream_key)
             if v is not None and not _is_pos_int(v):
@@ -221,8 +235,27 @@ def validate_phase0_config(cfg):
         for key in sorted(REQUIRED_SMOKE_KEYS):
             if key not in smoke:
                 errors.append(f"smoke.{key} 누락")
-        if smoke.get("way") != 10:
-            errors.append("smoke.way은 통합 프로젝트(Phase 0~7) 기준 10이어야 합니다.")
+        way = smoke.get("way")
+        if not _is_pos_int(way):
+            errors.append("smoke.way가 양의 정수가 아닙니다.")
+        else:
+            datasets_cfg = cfg.get("datasets") if isinstance(cfg.get("datasets"), dict) else {}
+            mnist_train = datasets_cfg.get("mnist_train")
+            mnist_test = datasets_cfg.get("mnist_test")
+            full_episodes = smoke.get("full_episodes")
+            n_query_per_class = smoke.get("n_query_per_class")
+            support_per_episode = datasets_cfg.get("support_per_episode")
+            is_official_full_smoke = (
+                mnist_train == 60000
+                and mnist_test == 10000
+                and full_episodes == 30
+                and n_query_per_class == 20
+                and support_per_episode == 10
+            )
+            if is_official_full_smoke and way != 10:
+                errors.append(
+                    "smoke.way은 MNIST 공식 full smoke 조건에서 10이어야 합니다."
+                )
         nq = smoke.get("n_query_per_class")
         if not _is_pos_int(nq):
             errors.append("smoke.n_query_per_class가 양의 정수여야 합니다.")

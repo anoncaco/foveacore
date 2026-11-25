@@ -531,3 +531,36 @@ def test_out_of_range_numpy_coordinate_rejected_on_restore():
     data["location"] = {"center": {"__numpy__": [1.1, 0.25], "dtype": "float64"}}
     with pytest.raises(ValueError, match="좌표"):
         Observation.from_dict(json.loads(json.dumps(data)))
+
+
+def test_sensor_profile_contracts_declare_stroke_clue_available():
+    assert SENSOR_PROFILE_CONTRACTS["F3"].stroke_clue_available is True
+    assert SENSOR_PROFILE_CONTRACTS["F3_HIRES"].stroke_clue_available is True
+
+
+@pytest.mark.parametrize("sensor_profile,grid_size", [("F3", 5), ("F3_HIRES", 97)])
+def test_observation_roundtrip_preserves_stroke_clue_declaration(sensor_profile, grid_size):
+    provenance = _image_provenance(sensor_profile=sensor_profile, grid_size=grid_size)
+    obs = Observation(
+        modality="visual",
+        source_id="s1",
+        features=None,
+        provenance=provenance,
+    )
+    restored = Observation.from_dict(json.loads(json.dumps(obs.to_dict())))
+    assert (
+        SENSOR_PROFILE_CONTRACTS[restored.provenance["sensor_profile"]].stroke_clue_available
+        is True
+    )
+    assert "stroke_clue_available" not in restored.provenance
+
+
+def test_make_image_provenance_rejects_stroke_clue_duplicate():
+    with pytest.raises(ValueError):
+        make_image_provenance(
+            original_hw=(2, 2),
+            processed_hw=(2, 2),
+            preprocess_profile_id="x",
+            sensor_profile="F3",
+            stroke_clue_available=True,
+        )

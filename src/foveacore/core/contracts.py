@@ -29,6 +29,7 @@ class SensorProfileContract:
     profile_version: str
     channels: int
     grid_size: int
+    stroke_clue_available: bool
 
     @property
     def contract_id(self):
@@ -46,6 +47,7 @@ SENSOR_PROFILE_CONTRACTS = MappingProxyType(
             SENSOR_PROFILE_VERSION,
             channels=profile["channels"],
             grid_size=profile["grid_size"],
+            stroke_clue_available=profile["stroke_clue_available"],
         )
         for name, profile in SENSOR_PROFILES.items()
     }
@@ -122,6 +124,7 @@ def make_image_provenance(
         "sensor_profile_version",
         "profile_contract_id",
         "coordinate_system",
+        "stroke_clue_available",
     }
     overlap = protected & set(metadata)
     if overlap:
