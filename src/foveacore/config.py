@@ -192,7 +192,7 @@ def validate_phase0_config(cfg):
             v = datasets.get("support_per_episode")
             if not _is_pos_int(v):
                 errors.append("datasets.support_per_episode가 양의 정수가 아닙니다.")
-            elif cfg["experiment_protocol"] == "STRICT_1SHOT":
+            else:
                 smoke_cfg = cfg.get("smoke") if isinstance(cfg.get("smoke"), dict) else {}
                 scope = smoke_cfg.get("scope") if isinstance(smoke_cfg, dict) else None
                 smoke_way = smoke_cfg.get("way") if isinstance(smoke_cfg, dict) else None
@@ -200,19 +200,19 @@ def validate_phase0_config(cfg):
                 if scope == "phase0_full_smoke":
                     if v != 10:
                         errors.append(
-                            "STRICT_1SHOT 공식 full smoke(scope=phase0_full_smoke)에서 "
+                            "공식 full smoke(scope=phase0_full_smoke)에서 "
                             "datasets.support_per_episode는 10이어야 합니다 "
                             "(MNIST 공식 full smoke 요구)."
                         )
-                elif scope == "general":
-                    if smoke_way_is_int and v != smoke_way:
-                        errors.append(
-                            "STRICT_1SHOT scope=general에서 "
-                            "datasets.support_per_episode는 smoke.way와 일치해야 합니다."
-                        )
-                else:
-                    # scope가 유효하지 않으면 smoke 쪽 검증에서 이미 오류를 보고한다.
-                    if smoke_way_is_int and v != smoke_way:
+                elif cfg["experiment_protocol"] == "STRICT_1SHOT":
+                    if scope == "general":
+                        if smoke_way_is_int and v != smoke_way:
+                            errors.append(
+                                "STRICT_1SHOT scope=general에서 "
+                                "datasets.support_per_episode는 smoke.way와 일치해야 합니다."
+                            )
+                    elif smoke_way_is_int and v != smoke_way:
+                        # scope가 유효하지 않으면 smoke 쪽 검증에서 이미 오류를 보고한다.
                         errors.append(
                             "STRICT_1SHOT에서 datasets.support_per_episode는 "
                             "smoke.way와 일치해야 합니다."
@@ -266,9 +266,9 @@ def validate_phase0_config(cfg):
             errors.append("smoke.way가 양의 정수가 아닙니다.")
         else:
             # MNIST 데이터 수량·full_episodes·n_query 고정 검증은 별도로 유지한다.
-            if cfg.get("experiment_protocol") == "STRICT_1SHOT" and scope == "phase0_full_smoke" and way != 10:
+            if scope == "phase0_full_smoke" and way != 10:
                 errors.append(
-                    "STRICT_1SHOT 공식 full smoke(scope=phase0_full_smoke)에서 "
+                    "공식 full smoke(scope=phase0_full_smoke)에서 "
                     "smoke.way는 10이어야 합니다 (MNIST 공식 full smoke 요구)."
                 )
         nq = smoke.get("n_query_per_class")

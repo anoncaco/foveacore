@@ -175,6 +175,28 @@ def test_official_scope_support_only_5_rejected():
     assert any("support_per_episode" in error for error in errors)
 
 
+@pytest.mark.parametrize("protocol", ["STRICT_1SHOT", "CONTINUAL", "REFERENCE_P3"])
+def test_official_scope_5way_rejected_for_all_protocols(protocol):
+    cfg = _load_valid_config()
+    cfg["experiment_protocol"] = protocol
+    cfg["smoke"]["scope"] = "phase0_full_smoke"
+    cfg["smoke"]["way"] = 5
+    cfg["datasets"]["support_per_episode"] = 5
+    errors = validate_phase0_config(cfg)
+    assert any("smoke.way" in error for error in errors)
+    assert any("support_per_episode" in error for error in errors)
+
+
+@pytest.mark.parametrize("protocol", ["STRICT_1SHOT", "CONTINUAL", "REFERENCE_P3"])
+def test_official_scope_10way_passes_for_all_protocols(protocol):
+    cfg = _load_valid_config()
+    cfg["experiment_protocol"] = protocol
+    cfg["smoke"]["scope"] = "phase0_full_smoke"
+    cfg["smoke"]["way"] = 10
+    cfg["datasets"]["support_per_episode"] = 10
+    assert validate_phase0_config(cfg) == []
+
+
 def test_general_scope_3way_passes():
     cfg = _load_valid_config()
     cfg["smoke"]["scope"] = "general"

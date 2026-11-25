@@ -213,6 +213,9 @@ class _ImmutableNdarray(np.ndarray):
             raise ValueError("WRITEABLE flag cannot be set to True(T2).")
         return super().setflags(*args, **kwargs)
 
+    def resize(self, *args, **kwargs):
+        raise AttributeError("resize는 불변 ndarray에서 사용할 수 없습니다(T2).")
+
 
 def _immutable_ndarray(value):
     """숫자 배열을 불변 bytes 버퍼로 복사해 쓰기 재활성화를 차단한다."""

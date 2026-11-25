@@ -570,6 +570,44 @@ def test_settings_rollback_on_status_failure(monkeypatch):
     assert seed_utils._GPU_RUNTIME_INITIALIZED == flag_before
 
 
+def test_settings_rollback_on_status_exception(monkeypatch):
+    import copy
+
+    from foveacore.utils import seed as seed_utils
+
+    torch.use_deterministic_algorithms(False, warn_only=True)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.manual_seed(123)
+    apply_seeds({"model_seed": 7})
+    rng_before = torch.get_rng_state().clone()
+    model_rng_before = get_rng("model_seed", "python").getstate()
+    applied_before = get_applied_seeds()
+    flag_before = seed_utils._GPU_RUNTIME_INITIALIZED
+
+    def raise_boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("foveacore.utils.seed.gpu_determinism_status", raise_boom)
+    with pytest.raises(RuntimeError, match="GPU 결정론 적용 검증 실패"):
+        initialize_gpu_runtime(99)
+
+    assert torch.are_deterministic_algorithms_enabled() is False
+    assert torch.is_deterministic_algorithms_warn_only_enabled() is True
+    assert torch.backends.cudnn.deterministic is False
+    assert torch.backends.cudnn.benchmark is True
+    assert torch.get_float32_matmul_precision() == "high"
+    assert torch.backends.cuda.matmul.allow_tf32 is True
+    assert torch.backends.cudnn.allow_tf32 is True
+    assert torch.equal(torch.get_rng_state(), rng_before)
+    assert get_rng("model_seed", "python").getstate() == model_rng_before
+    assert get_applied_seeds() == applied_before
+    assert seed_utils._GPU_RUNTIME_INITIALIZED == flag_before
+
+
 def test_settings_rollback_on_apply_exception(monkeypatch):
     from foveacore.utils import seed as seed_utils
 

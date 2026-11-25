@@ -441,6 +441,8 @@ def test_immutable_ndarray_blocks_shape_strides_dtype_data_setflags():
             setattr(arr, name, value)
     with pytest.raises(ValueError, match="WRITEABLE"):
         arr.setflags(write=True)
+    with pytest.raises(AttributeError, match="resize"):
+        arr.resize((4,))
 
     assert arr.shape == shape_before
     assert not arr.flags.writeable
@@ -592,3 +594,21 @@ def test_observation_from_dict_rejects_provenance_stroke_clue_available(sensor_p
 def test_non_image_observation_unaffected_by_stroke_clue_provenance():
     obs = Observation(modality="text", source_id="s1", provenance={"stroke_clue_available": False})
     assert obs.provenance["stroke_clue_available"] is False
+
+
+def test_memory_modality_views_resize_cannot_change_shape():
+    arr = np.arange(6).reshape(2, 3)
+    memory = Memory(modality_views=arr)
+    assert isinstance(memory.modality_views, np.ndarray)
+    with pytest.raises(AttributeError, match="resize"):
+        memory.modality_views.resize((6,))
+    assert memory.modality_views.shape == (2, 3)
+    assert memory.modality_views.tolist() == [[0, 1, 2], [3, 4, 5]]
+    assert not memory.modality_views.flags.writeable
+
+    restored = Memory.from_dict(memory.to_dict())
+    with pytest.raises(AttributeError, match="resize"):
+        restored.modality_views.resize((6,))
+    assert restored.modality_views.shape == (2, 3)
+    assert restored.modality_views.tolist() == [[0, 1, 2], [3, 4, 5]]
+    assert not restored.modality_views.flags.writeable

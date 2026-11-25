@@ -172,7 +172,11 @@ def set_gpu_determinism(model_seed=None):
         _restore_all()
         raise RuntimeError(f"GPU 결정론 설정 실패(T2): {exc}") from exc
 
-    status = gpu_determinism_status()
+    try:
+        status = gpu_determinism_status()
+    except Exception as exc:
+        _restore_all()
+        raise RuntimeError(f"GPU 결정론 적용 검증 실패(T2): {exc}") from exc
     failed = [name for name, value in status.items() if value is not True]
     if failed:
         _restore_all()
