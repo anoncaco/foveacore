@@ -75,6 +75,7 @@ def isolate_global_state(monkeypatch):
     numpy_rng_state = np.random.get_state()
     torch_rng_state = torch.get_rng_state().clone()
     deterministic = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
     cudnn_deterministic = torch.backends.cudnn.deterministic
     cudnn_benchmark = torch.backends.cudnn.benchmark
     matmul_precision = torch.get_float32_matmul_precision()
@@ -99,7 +100,7 @@ def isolate_global_state(monkeypatch):
     torch.set_rng_state(torch_rng_state)
     if cuda_was_initialized:
         torch.cuda.set_rng_state_all(cuda_rng_states)
-    torch.use_deterministic_algorithms(deterministic)
+    torch.use_deterministic_algorithms(deterministic, warn_only=warn_only)
     torch.backends.cudnn.deterministic = cudnn_deterministic
     torch.backends.cudnn.benchmark = cudnn_benchmark
     torch.set_float32_matmul_precision(matmul_precision)

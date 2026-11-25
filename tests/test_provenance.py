@@ -237,3 +237,18 @@ def test_git_dirty_detects_untracked_when_status_config_disabled(git_repo):
 def test_git_dirty_returns_none_outside_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(provenance, "__file__", str(tmp_path / "src" / "foveacore" / "utils" / "provenance.py"))
     assert is_git_dirty() is None
+
+
+def test_model_seed_consistency_initialize_then_provenance():
+    seed_utils.initialize_gpu_runtime(88)
+    p = collect_provenance()
+    assert p["seeds"]["model_seed"] == 88
+    assert torch.initial_seed() == 88
+
+
+def test_model_seed_consistency_apply_then_initialize():
+    apply_seeds({"model_seed": 88})
+    seed_utils.initialize_gpu_runtime()
+    p = collect_provenance()
+    assert p["seeds"]["model_seed"] == 88
+    assert torch.initial_seed() == 88

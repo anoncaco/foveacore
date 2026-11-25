@@ -297,3 +297,83 @@ def test_assert_reproducible_rejects_changing_results():
     values = iter([1, 2])
     with pytest.raises(NumericalInstabilityError, match="결정론적"):
         assert_reproducible(lambda: next(values))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA device required")
+def test_model_seed_consistency_fresh_process():
+    result = _run_cuda_script(
+        """
+        import torch
+        from foveacore.utils.seed import (
+            DEFAULT_SEEDS,
+            apply_seeds,
+            get_applied_seeds,
+            initialize_gpu_runtime,
+        )
+
+        assert get_applied_seeds()["model_seed"] == DEFAULT_SEEDS["model_seed"]
+        initialize_gpu_runtime(88)
+        assert get_applied_seeds()["model_seed"] == 88
+        assert torch.initial_seed() == 88
+        if torch.cuda.is_available():
+            assert torch.cuda.initial_seed() == 88
+
+        apply_seeds({"model_seed": 88})
+        initialize_gpu_runtime()
+        assert get_applied_seeds()["model_seed"] == 88
+        assert torch.initial_seed() == 88
+        if torch.cuda.is_available():
+            assert torch.cuda.initial_seed() == 88
+        """
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_initialize_gpu_runtime_explicit_model_seed_updates_applied_and_torch():
+    initialize_gpu_runtime(88)
+    assert get_applied_seeds()["model_seed"] == 88
+    assert torch.initial_seed() == 88
+    assert ensure_gpu_runtime_initialized() is True
+
+
+def test_initialize_gpu_runtime_none_uses_last_applied_model_seed():
+    apply_seeds({"model_seed": 88})
+    before = get_applied_seeds()
+    initialize_gpu_runtime()
+    assert get_applied_seeds() == before
+    assert torch.initial_seed() == 88
+
+
+def test_initialize_gpu_runtime_default_matches_default_seed():
+    assert get_applied_seeds()["model_seed"] == DEFAULT_SEEDS["model_seed"]
+
+
+def test_failed_initialization_does_not_update_applied_seeds_or_rng(monkeypatch):
+    apply_seeds({"model_seed": 7})
+    before_applied = get_applied_seeds()
+    torch.manual_seed(123)
+    rng_before = torch.get_rng_state().clone()
+
+    monkeypatch.setattr(
+        "foveacore.utils.seed.gpu_determinism_status", lambda: {"x": False}
+    )
+    with pytest.raises(RuntimeError):
+        initialize_gpu_runtime(99)
+    assert get_applied_seeds() == before_applied
+    assert torch.equal(torch.get_rng_state(), rng_before)
+
+
+def test_invalid_explicit_model_seed_does_not_mutate_state():
+    apply_seeds({"model_seed": 7})
+    before_applied = get_applied_seeds()
+    with pytest.raises((TypeError, ValueError)):
+        initialize_gpu_runtime("bad")
+    assert get_applied_seeds() == before_applied
+
+
+def test_warn_only_true_makes_ensure_gpu_runtime_fail():
+    initialize_gpu_runtime()
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    with pytest.raises(RuntimeError) as exc:
+        ensure_gpu_runtime_initialized()
+    assert "warn_only" in str(exc.value)

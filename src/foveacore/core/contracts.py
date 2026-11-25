@@ -196,9 +196,7 @@ def validate_unit_coordinates(value, name="location"):
 def _immutable_ndarray(value):
     """숫자 배열을 불변 bytes 버퍼로 복사해 쓰기 재활성화를 차단한다."""
     if value.dtype.hasobject:
-        arr = value.copy()
-        arr.setflags(write=False)
-        return arr
+        raise TypeError("object dtype 배열은 지원하지 않습니다(T2).")
     return np.frombuffer(value.tobytes(order="C"), dtype=value.dtype).reshape(value.shape)
 
 

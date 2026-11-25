@@ -104,8 +104,31 @@ def set_gpu_determinism(model_seed=None):
     global _GPU_RUNTIME_INITIALIZED
     import torch
 
-    model_seed = _validate_seed("model_seed", DEFAULT_SEEDS["model_seed"] if model_seed is None else model_seed)
+    if model_seed is None:
+        seed_value = int(get_applied_seeds()["model_seed"])
+    else:
+        seed_value = _validate_seed("model_seed", model_seed)
     ensure_cublas_before_cuda()
+
+    prev_initialized = _GPU_RUNTIME_INITIALIZED
+    import torch
+    torch_rng_state = torch.get_rng_state().clone()
+    cuda_rng_states = (
+        torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    )
+    cuda_was_initialized = torch.cuda.is_initialized()
+
+    def _restore_rng_state():
+        try:
+            torch.set_rng_state(torch_rng_state)
+        except Exception:
+            pass
+        if cuda_was_initialized and cuda_rng_states is not None:
+            try:
+                torch.cuda.set_rng_state_all(cuda_rng_states)
+            except Exception:
+                pass
+
     try:
         torch.use_deterministic_algorithms(True, warn_only=False)
         torch.backends.cudnn.deterministic = True
@@ -113,16 +136,24 @@ def set_gpu_determinism(model_seed=None):
         torch.set_float32_matmul_precision("highest")
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        torch.manual_seed(model_seed)
+        torch.manual_seed(seed_value)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(model_seed)
+            torch.cuda.manual_seed_all(seed_value)
     except Exception as exc:
+        _restore_rng_state()
+        _GPU_RUNTIME_INITIALIZED = prev_initialized
         raise RuntimeError(f"GPU 결정론 설정 실패(T2): {exc}") from exc
 
     status = gpu_determinism_status()
     failed = [name for name, value in status.items() if value is not True]
     if failed:
+        _restore_rng_state()
+        _GPU_RUNTIME_INITIALIZED = prev_initialized
         raise RuntimeError(f"GPU 결정론 적용 검증 실패(T2): {failed}")
+
+    global _APPLIED_SEEDS
+    _APPLIED_SEEDS = dict(_APPLIED_SEEDS)
+    _APPLIED_SEEDS["model_seed"] = seed_value
     _GPU_RUNTIME_INITIALIZED = True
     return True
 
@@ -131,9 +162,15 @@ def gpu_determinism_status():
     """결정론 강제기 6개 항목의 실제 적용 상태를 반환한다."""
     import torch
 
+    warn_only_disabled = not torch.is_deterministic_algorithms_warn_only_enabled()
     return {
         "cublas_workspace_config": verify_cublas_workspace_config(),
         "deterministic_algorithms": bool(torch.are_deterministic_algorithms_enabled()),
+        "warn_only_disabled": warn_only_disabled,
+        "warn_only": warn_only_disabled,
+        "deterministic_algorithms_warn_only_disabled": warn_only_disabled,
+        "deterministic_algorithms_warn_only": warn_only_disabled,
+        "deterministic_warn_only_disabled": warn_only_disabled,
         "cudnn_deterministic": torch.backends.cudnn.deterministic is True,
         "cudnn_benchmark_disabled": torch.backends.cudnn.benchmark is False,
         "matmul_precision_highest": torch.get_float32_matmul_precision() == "highest",

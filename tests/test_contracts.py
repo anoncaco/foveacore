@@ -19,6 +19,7 @@ from foveacore.core.contracts import (
     Prediction,
     Structure,
     _freeze,
+    _immutable_ndarray,
     make_image_provenance,
     validate_image_provenance,
     validate_unit_coordinates,
@@ -80,6 +81,26 @@ def test_freeze_ndarray_is_immutable_defensive_copy():
     with pytest.raises(ValueError, match="read-only"):
         frozen[0] = 77
     assert frozen.tolist() == [1, 2, 3]
+
+
+def test_immutable_ndarray_rejects_object_dtype():
+    with pytest.raises(TypeError):
+        _immutable_ndarray(np.array([1, "a"], dtype=object))
+
+
+def test_freeze_rejects_object_ndarray_creation():
+    with pytest.raises(TypeError):
+        _freeze(np.array([1, "a"], dtype=object))
+
+
+def test_structure_rejects_object_array_creation():
+    with pytest.raises(TypeError):
+        Structure(embedding=np.array([1, "a"], dtype=object))
+
+
+def test_object_ndarray_deserialization_rejected():
+    with pytest.raises(TypeError):
+        _freeze({"__numpy__": [1, "a"], "dtype": "object"})
 
 
 def test_observation_ndarray_cannot_be_reactivated_for_writing():
