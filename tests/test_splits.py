@@ -94,17 +94,162 @@ def test_validate_split_ids_disjoint_violation():
         ),
     }
     errors = validate_split_ids_disjoint(manifests)
-    assert any("DISJOINT 위반" in e for e in errors)
+    assert any("분할 간 ID 중복" in e for e in errors)
 
 
 def test_build_all_mnist_splits(tmp_path: Path):
-    from foveacore.data.mnist import mnist_available
+    from foveacore.data.ground_truth_vault import GroundTruthVault
+    from foveacore.data.mnist import (
+        MNIST_FILES,
+        mnist_available,
+        sha256_file,
+        verify_mnist_checksums,
+    )
 
-    raw = tmp_path / "raw"
+    raw = Path(__file__).resolve().parents[1] / "data" / "raw"
     if not mnist_available(raw):
-        pytest.skip("MNIST 원본 없음 (download_mnist 필요)")
-    manifests = build_all_mnist_splits(raw, tmp_path / "out")
-    assert set(manifests.keys()) == SPLIT_NAMES
-    assert (tmp_path / "out" / "split_manifest_v1.json").exists()
-    total = sum(len(m["entries"]) for m in manifests.values())
-    assert total == 10000 + 15000 + 35000 + 7000 + 3000  # 70000
+        pytest.fail(
+            f"MNIST 원본이 없습니다: {raw}. "
+            "download_mnist()로 로컬 원본을 확보한 뒤 다시 실행하세요."
+        )
+
+    assert verify_mnist_checksums(raw) == []
+    for filename, info in MNIST_FILES.items():
+        assert sha256_file(raw / filename) == info["sha256"]
+
+    split_seed = 1001
+    first_out = tmp_path / "first"
+    second_out = tmp_path / "second"
+    first = build_all_mnist_splits(raw, first_out, split_seed=split_seed)
+    second = build_all_mnist_splits(raw, second_out, split_seed=split_seed)
+
+    assert set(first) == set(second) == SPLIT_NAMES
+    expected_counts = {
+        "support_pool": 10_000,
+        "dev_stream": 15_000,
+        "main_stream": 35_000,
+        "official_test": 7_000,
+        "reserved_sealed": 3_000,
+    }
+    for split_name, expected_count in expected_counts.items():
+        assert len(first[split_name]["entries"]) == expected_count
+    for split_name in SPLIT_NAMES.difference(expected_counts):
+        assert first[split_name]["entries"] == []
+
+    sample_ids = [
+        entry["sample_id"]
+        for manifest in first.values()
+        for entry in manifest["entries"]
+    ]
+    assert len(sample_ids) == len(set(sample_ids)) == 70_000
+
+    first_assignment = {
+        entry["sample_id"]: split_name
+        for split_name, manifest in first.items()
+        for entry in manifest["entries"]
+    }
+    second_assignment = {
+        entry["sample_id"]: split_name
+        for split_name, manifest in second.items()
+        for entry in manifest["entries"]
+    }
+    assert first_assignment == second_assignment
+    assert first == second
+
+    first_vault = GroundTruthVault.load(first_out / "ground_truth_vault.json")
+    second_vault = GroundTruthVault.load(second_out / "ground_truth_vault.json")
+    all_ids = frozenset(sample_ids)
+    assert first_vault._read_labels(all_ids) == second_vault._read_labels(all_ids)
+
+
+def _mock_small_mnist(monkeypatch):
+    import numpy as np
+
+    import foveacore.data.mnist as mnist_module
+
+    train_images = np.zeros((60, 28, 28), dtype=np.uint8)
+    test_images = np.zeros((10, 28, 28), dtype=np.uint8)
+    for index in range(60):
+        train_images[index, 0, 0] = index
+    for index in range(10):
+        test_images[index, 0, 0] = index + 100
+    train_labels = np.arange(60, dtype=np.uint8) % 10
+    test_labels = np.arange(10, dtype=np.uint8) % 10
+
+    monkeypatch.setattr(mnist_module, "mnist_available", lambda _raw: True)
+    monkeypatch.setattr(mnist_module, "verify_mnist_checksums", lambda _raw: [])
+    monkeypatch.setattr(
+        mnist_module,
+        "load_mnist",
+        lambda _raw: (train_images, train_labels, test_images, test_labels),
+    )
+
+
+def test_build_all_mnist_splits_with_synthetic_raw_writes_all_outputs(tmp_path, monkeypatch):
+    _mock_small_mnist(monkeypatch)
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "out"
+
+    manifests = build_all_mnist_splits(raw, out)
+
+    assert set(manifests) == SPLIT_NAMES
+    assert all((out / f"split_{split_name}.json").exists() for split_name in SPLIT_NAMES)
+    assert (out / "split_manifest_v1.json").exists()
+    assert (out / "ground_truth_vault.json").exists()
+    assert (out / "validation_metadata.json").exists()
+    assert (out / "phash_candidates.json").exists()
+
+
+def test_build_all_mnist_splits_validates_global_ids_before_saving(tmp_path, monkeypatch):
+    _mock_small_mnist(monkeypatch)
+    import foveacore.data.splits as splits_module
+
+    monkeypatch.setattr(
+        splits_module,
+        "validate_split_ids_disjoint",
+        lambda _manifests: ["forced global isolation failure"],
+    )
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="사전 저장 검증"):
+        build_all_mnist_splits(raw, out)
+    assert not out.exists()
+
+
+def test_build_all_mnist_splits_validates_sealed_policy_before_saving(tmp_path, monkeypatch):
+    _mock_small_mnist(monkeypatch)
+    import foveacore.data.seal_guard as seal_guard_module
+
+    monkeypatch.setattr(
+        seal_guard_module,
+        "validate_sealed_policy",
+        lambda _manifests: ["forced sealed policy failure"],
+    )
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="사전 저장 검증"):
+        build_all_mnist_splits(raw, out)
+    assert not out.exists()
+
+
+def test_build_all_mnist_splits_validates_metadata_before_saving(tmp_path, monkeypatch):
+    _mock_small_mnist(monkeypatch)
+    from foveacore.data.ood_validator import OODValidator
+
+    monkeypatch.setattr(
+        OODValidator,
+        "validate_disjoint",
+        lambda _self: ["forced metadata isolation failure"],
+    )
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "out"
+
+    with pytest.raises(ValueError, match="데이터 분할 격리 검증 실패"):
+        build_all_mnist_splits(raw, out)
+    assert not out.exists()

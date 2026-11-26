@@ -3,6 +3,8 @@
 import pytest
 
 from foveacore.data.ood_validator import DISJOINT_RULES, OODValidator
+from foveacore.data.schema import LEGACY_DISJOINT_RULES, OOD_TRANSFER_DISJOINT_RULES
+from foveacore.data.validation_metadata import ValidationMetadataStore
 
 
 def test_disjoint_rules_pass():
@@ -15,7 +17,7 @@ def test_disjoint_rules_pass():
         },
     }
     v = OODValidator(manifests)
-    assert v.validate_disjoint() == []
+    assert any("저장소가 필요" in error for error in v.validate_disjoint())
 
 
 def test_disjoint_rules_violation():
@@ -25,8 +27,7 @@ def test_disjoint_rules_violation():
     }
     v = OODValidator(manifests)
     errors = v.validate_disjoint()
-    assert any("DISJOINT 위반" in e for e in errors)
-    assert any("p2_non_digit ∩ dev_ood" in e for e in errors)
+    assert any("저장소가 필요" in error for error in errors)
 
 
 def test_validate_no_overlap_with_pass():
@@ -47,4 +48,19 @@ def test_validate_no_overlap_with_violation():
 
 
 def test_disjoint_rules_count():
-    assert len(DISJOINT_RULES) == 5
+    assert len(LEGACY_DISJOINT_RULES) == 5
+    assert DISJOINT_RULES is OOD_TRANSFER_DISJOINT_RULES
+    assert len(DISJOINT_RULES) == 8
+
+
+def test_legacy_validators_do_not_filter_missing_metadata_errors():
+    manifests = {"dev_ood": {"entries": [{"sample_id": "ood-missing-metadata"}]}}
+    validator = OODValidator(manifests, ValidationMetadataStore())
+
+    for validate in (
+        validator.validate_class_writer_source_overlap,
+        validator.validate_writer_source_isolation,
+    ):
+        errors = validate()
+        assert any("검증 메타데이터 누락" in error for error in errors)
+    assert validator.validate_alphabet_overlap() == []

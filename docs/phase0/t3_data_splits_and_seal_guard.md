@@ -5,7 +5,7 @@
 
 ## 1. 구현 목표
 
-기존 dev 구현을 참고하되 다음 네 경계를 중심으로 재작성합니다.
+기존 T3 구현을 참고하되 다음 네 경계를 중심으로 재작성합니다.
 
 1. 공개 매니페스트와 정답·검증 메타데이터 분리
 2. MNIST 및 OOD·전이 분할의 정확한 격리 검증
@@ -327,7 +327,7 @@ build-splits
 
 ### 8.5 실제 MNIST 분할
 
-기존 `tests/test_splits.py::test_build_all_mnist_splits`는 원본이 없으면 skip 되고 총 개수만 확인합니다. 이를 실제 원본이 있을 때 실행되는 필수 인수 테스트로 보강합니다.
+`tests/test_splits.py::test_build_all_mnist_splits`는 실제 MNIST 원본을 사용해 아래 항목을 검증합니다. 원본이 없으면 로컬 원본 경로와 `download_mnist()` 안내를 포함한 명시적 실패로 보고합니다.
 
 - MNIST 원본 4개 파일의 SHA-256 체크섬 검증
 - train 60,000 분할:
@@ -361,7 +361,6 @@ build-splits
 6. **CLI 연결**
    - 기존 명령·옵션·종료 코드 유지
 7. **정상·부정 테스트 및 실제 MNIST 인수 테스트**
-8. **T3 완료 검증 후 이 임시 문서 삭제**
 
 ## 10. 기존 코드에서 재작성 시 확인할 지점
 
@@ -370,4 +369,4 @@ build-splits
 - `src/foveacore/data/ood_validator.py:107`의 메타데이터 검사가 P2를 `p2_non_digit` 단독으로 한정합니다.
 - `src/foveacore/data/seal_guard.py:50`는 호출자가 준 artifact hash만 비교하며 실제 파일을 읽지 않습니다.
 - `src/foveacore/__main__.py:55`는 새 8쌍·메타데이터 누락·전체 격리 규칙을 모두 호출하지 않습니다.
-- `tests/test_splits.py:100`의 실제 MNIST 테스트는 원본 부재 시 skip 됩니다.
+- 재작성 전 `tests/test_splits.py:100`의 실제 MNIST 테스트는 원본 부재 시 skip 했습니다. 현재 테스트는 로컬 경로와 `download_mnist()` 안내를 포함한 명시적 실패로 보고합니다.

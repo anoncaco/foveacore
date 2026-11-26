@@ -19,15 +19,22 @@ from foveacore.data.seal_guard import SEALED_SPLITS, validate_sealed_policy
 from foveacore.data.splits import (
     SPLIT_NAMES,
     build_all_mnist_splits,
+    load_split_manifest,
+    register_manifest,
     validate_split_ids_disjoint,
     validate_split_manifest,
+)
+from foveacore.data.validation_metadata import (
+    ValidationMetadataError,
+    ValidationMetadataStore,
 )
 from foveacore.forbidden_packages import assert_no_forbidden_packages
 from foveacore.utils.seed import DEFAULT_SEEDS, initialize_gpu_runtime
 
 
-def _validate_data_integrity(out_dir: Path) -> list[str]:
+def _validate_data_integrity(out_dir: Path) -> tuple[list[str], list[str]]:
     errors: list[str] = []
+    warnings: list[str] = []
     raw_dir = out_dir / "raw"
     # MNIST 체크섬 (T3-01/02)
     if raw_dir.exists():
@@ -42,9 +49,8 @@ def _validate_data_integrity(out_dir: Path) -> list[str]:
             errors.append(f"분할 매니페스트 누락: {p}")
             continue
         try:
-            m = json.loads(p.read_text(encoding="utf-8"))
-            manifests[split_name] = m
-            errors.extend(validate_split_manifest(m))
+            manifests[split_name] = load_split_manifest(p)
+            errors.extend(validate_split_manifest(manifests[split_name]))
         except Exception as exc:
             errors.append(f"분할 매니페스트 파싱 실패({split_name}): {exc}")
 
@@ -52,14 +58,28 @@ def _validate_data_integrity(out_dir: Path) -> list[str]:
     if not vault_path.exists():
         errors.append(f"정답 저장소 누락: {vault_path}")
 
-    if manifests:
-        errors.extend(validate_split_ids_disjoint(manifests))
-        errors.extend(validate_sealed_policy(manifests))
-        v = OODValidator(manifests)
-        errors.extend(v.validate_cross_split_image_duplicates())
-        errors.extend(v.validate_writer_source_isolation())
+    errors.extend(register_manifest(manifests))
+    errors.extend(validate_sealed_policy(manifests))
+    errors.extend(validate_split_ids_disjoint(manifests))
+    metadata_path = out_dir / "validation_metadata.json"
+    metadata_store = None
+    if metadata_path.exists():
+        try:
+            metadata_store = ValidationMetadataStore.load(metadata_path)
+        except ValidationMetadataError as exc:
+            errors.append(str(exc))
+    else:
+        populated_splits = any(manifest.get("entries") for manifest in manifests.values())
+        if not populated_splits:
+            metadata_store = ValidationMetadataStore()
+        else:
+            errors.append(f"검증 메타데이터 누락: {metadata_path}")
+    v = OODValidator(manifests, metadata_store)
+    errors.extend(v.validate_disjoint())
+    errors.extend(v.validate_cross_split_image_duplicates())
+    warnings.extend(v.validate_alphabet_overlap())
 
-    return errors
+    return errors, warnings
 
 
 def main(argv=None) -> int:
@@ -103,7 +123,9 @@ def main(argv=None) -> int:
                 print(f"ERROR: {err}")
             return 1
         if args.data_dir is not None:
-            data_errors = _validate_data_integrity(Path(args.data_dir))
+            data_errors, data_warnings = _validate_data_integrity(Path(args.data_dir))
+            for warning in data_warnings:
+                print(f"WARNING: {warning}")
             if data_errors:
                 for err in data_errors:
                     print(f"ERROR: {err}")
