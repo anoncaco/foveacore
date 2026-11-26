@@ -22,6 +22,7 @@ Phase 0~7 동안 생성되는 주요 문서·산출물:
 | `data/raw/` | MNIST 원본 (SHA-256 검증 필수) | T3 |
 | `artifacts/<run_id>/` | run별 manifest·trace·events | T2~T8 |
 | `tests/` | pytest 검증 스위트 | T1/T2~T8 |
+| [`docs/phase0/`](docs/phase0/README.md) | Phase 0 기준 계획·Task별 설계 및 검증 문서 | T0~T3 |
 
 ## 개발 환경
 - Python 가상환경: .venv

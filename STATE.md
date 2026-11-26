@@ -2,6 +2,7 @@
 
 - **현재 단계:** Phase 0 (T3 완료)
 - **기준 문서:** FoveaCore 연구·구현 계획서 v1.9.3
+- **Phase 0 문서:** [`docs/phase0/README.md`](docs/phase0/README.md)
 - **버전:** 0.1.0
 
 ## 파이썬 환경 규칙
