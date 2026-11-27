@@ -81,6 +81,30 @@ def test_canonical_json_is_deterministic_and_rejects_nan():
         canonical_json({"value": float("nan")})
 
 
+def test_canonical_json_handles_nested_frozen_metadata():
+    body = {
+        "schema_version": "1.0",
+        "data_split_hash": "a" * 64,
+        "config_hash": "b" * 64,
+        "checkpoint_hash": "c" * 64,
+        "manifest_sha256": "d" * 64,
+        "metadata": {"nested": {"b": 2, "a": 1}, "items": [{"z": 0}]},
+    }
+    manifest = FreezeManifest.from_dict(body)
+    assert canonical_json(manifest.to_dict()) == (
+        '{"checkpoint_hash":"'
+        + "c" * 64
+        + '","config_hash":"'
+        + "b" * 64
+        + '","data_split_hash":"'
+        + "a" * 64
+        + '","manifest_sha256":"'
+        + "d" * 64
+        + '","metadata":{"items":[{"z":0}],"nested":{"a":1,"b":2}},'
+        + '"schema_version":"1.0"}'
+    )
+
+
 def test_compute_hash_excludes_self_and_accepts_freeze_manifest():
     body = {
         "schema_version": "1.0",

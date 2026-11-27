@@ -1,9 +1,11 @@
 """T3 CLI 데이터 검증의 오류·경고 출력 계약."""
 
+import json
 from pathlib import Path
 
 from foveacore.__main__ import _validate_data_integrity, main
 from foveacore.data.splits import build_split_manifest
+from foveacore.data.schema import SPLIT_NAMES
 from foveacore.data.validation_metadata import ValidationMetadataStore
 
 
@@ -42,6 +44,36 @@ def test_validate_data_integrity_returns_separate_errors_and_warnings(tmp_path):
     errors, warnings = _validate_data_integrity(tmp_path)
     assert errors == []
     assert warnings == []
+
+
+def test_validate_data_integrity_rejects_labels_in_combined_manifest(tmp_path):
+    _write_empty_slots(tmp_path)
+    combined = {
+        "schema_version": "1.0",
+        "splits": {
+            split_name: json.loads(
+                (tmp_path / f"split_{split_name}.json").read_text(encoding="utf-8")
+            )
+            for split_name in SPLIT_NAMES
+        },
+    }
+    combined["splits"]["dev_ood"]["entries"] = [
+        {
+            "sample_id": "secret-1",
+            "split_name": "dev_ood",
+            "sha256": "sha-secret",
+            "phash": "phash-secret",
+            "sealed_level": "SEALED",
+            "label": "9",
+        }
+    ]
+    (tmp_path / "split_manifest_v1.json").write_text(
+        json.dumps(combined), encoding="utf-8"
+    )
+
+    errors, _ = _validate_data_integrity(tmp_path)
+
+    assert any("label" in error for error in errors)
 
 
 def test_validate_data_integrity_reports_alphabet_overlap_as_warning(tmp_path):

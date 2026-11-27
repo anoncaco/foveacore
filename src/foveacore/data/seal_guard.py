@@ -34,17 +34,26 @@ def _require_sha256(value: Any, field_name: str) -> str:
     return value
 
 
+def _canonical_json_value(obj: Any) -> Any:
+    """중첩 mapping·tuple을 JSON 배열/객체로 정규화합니다."""
+    if isinstance(obj, Mapping):
+        return {key: _canonical_json_value(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_canonical_json_value(value) for value in obj]
+    return obj
+
+
 def canonical_json(obj: Any) -> str:
     """키 정렬·공백 제거·NaN 금지 Canonical JSON."""
     try:
         return json.dumps(
-            obj,
+            _canonical_json_value(obj),
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
             allow_nan=False,
         )
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise SealGuardError("Canonical JSON 직렬화 실패") from exc
 
 

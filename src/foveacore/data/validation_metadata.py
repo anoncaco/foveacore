@@ -28,7 +28,7 @@ class ValidationMetadata:
     split_name: str
     sample_id: str
     class_id: str
-    writer_id: str
+    writer_id: str | None
     alphabet_id: str | None
     source_id: str
 
@@ -41,9 +41,13 @@ class ValidationMetadata:
         object.__setattr__(
             self, "sample_id", _required_string(self.sample_id, "sample_id")
         )
-        for name in ("class_id", "writer_id", "source_id"):
+        for name in ("class_id", "source_id"):
             object.__setattr__(
                 self, name, _required_string(getattr(self, name), name)
+            )
+        if self.writer_id is not None:
+            object.__setattr__(
+                self, "writer_id", _required_string(self.writer_id, "writer_id")
             )
         if self.alphabet_id is not None:
             object.__setattr__(
@@ -71,7 +75,7 @@ class ValidationMetadata:
                 split_name=data["split_name"],
                 sample_id=data["sample_id"],
                 class_id=data["class_id"],
-                writer_id=data["writer_id"],
+                writer_id=data.get("writer_id"),
                 alphabet_id=data.get("alphabet_id"),
                 source_id=data["source_id"],
             )
