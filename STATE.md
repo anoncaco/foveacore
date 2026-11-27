@@ -122,12 +122,13 @@ dev (구현) → verify (검증/수정) → main (최종 통합)
 - `core/contracts.py`: v1.9.3 부록 1 6대 인터페이스(Observation/Action/Structure/Hypothesis/Prediction/Memory) — 불변 변환(`MappingProxyType`/`tuple`/read-only ndarray), `ImmutableTensor`(`.detach().clone()` 방어 복사 + SHA-256 스냅샷 변경 탐지), JSON 왕복 직렬화.
 - 검증: `pytest tests/ -q`(19 passed). 결정론 플래그: cudnn.deterministic=True, cudnn.benchmark=False, tf32_matmul=False, tf32_cudnn=False, precision=highest, CUBLAS=:4096:8.
 
-## T3 결함 수정 완료 노트 (`9fb9a91`, 미커밋)
+## T3 결함 수정 완료 노트 (`61b4e5b`)
 
 - 기준 커밋: `9fb9a91` (`verify`, 결함 수정 직전 HEAD).
+- 커밋·푸시: `61b4e5b`, `origin/verify`.
 - 수정 결함:
   - P1: resolver의 policy 오버라이드 guard 우회 차단.
-  - P2: 등록 시 전역 `sample_id` 중복 거부 및 교차 split query 거부.
+  - P2: 등록 시 전역 `sample_id` 중복 거부 및 query 전역 등록 검증·요청 ID 겹침 시 차단.
   - P3: `split_manifest_v1.json` 내 라벨·기밀 필드 주입 검증 추가.
   - P4: 중첩 `MappingProxyType`/tuple 메타데이터 Canonical JSON 정규화.
   - P5: pHash 근접 후보 검색을 Hamming 거리 BK-tree로 전환해 버킷 누락 제거.
@@ -149,7 +150,14 @@ dev (구현) → verify (검증/수정) → main (최종 통합)
   - BK-tree 무작위 30세트·threshold 0/1/3/10 brute-force 대조 → PASS.
   - `git diff --check` → PASS.
 - 독립 감사: `auditor` 3개 단위 요청했으나 공급자 무료 사용량 한도·동시 요청 600 초과·모델 unavailable로 미실행. 메인 모델 fallback 자체 검증만 완료.
-- 커밋·푸시: 하지 않음.
+
+## T3 접근제어 후속 보강 (`61b4e5b`, 미커밋)
+
+- 정상 support 요청은 다른 split에 등록된 미확정 query 때문에 차단되지 않도록, query는 전역 등록만 확인하고 요청 `sample_ids`와 겹칠 때만 차단.
+- EVALUATE는 실제 `SealGuard`와 `VerificationRecord`만 허용하고, `SealGuard.assert_access()` 기본 구현을 직접 호출해 가드 오버라이드 우회를 차단.
+- 생성/수정 파일: `src/foveacore/data/access_control.py`, `tests/test_access_control.py`, `STATE.md`.
+- 검증: `.venv/bin/python -m pytest -q` → **408 passed** (596.38초, exit 0), `git diff --check` → PASS.
+- 독립 감사는 재실행하지 않았고, 해당 후속 수정은 미커밋 상태.
 
 ## 보류 사항
 

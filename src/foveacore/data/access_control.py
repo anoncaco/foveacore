@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from foveacore.data.ground_truth_vault import GroundTruthVault, GroundTruthVaultError
+from foveacore.data.seal_guard import SealGuard, VerificationRecord
 
 from foveacore.data.schema import (
     AccessDecision,
@@ -125,21 +126,15 @@ class LabelAccessPolicy:
                 request,
                 f"미등록 sample_id: {request.split_name} -> {sorted(unregistered)}",
             )
-        cross_split_query = {
+        unregistered_query = {
             sample_id
             for sample_id in request.query_ids
-            if self._id_to_split.get(sample_id) not in (None, request.split_name)
+            if sample_id not in self._id_to_split
         }
-        if cross_split_query:
-            return LabelAccessPolicy._deny(
-                request,
-                f"다른 split query sample_id: {sorted(cross_split_query)}",
-            )
-        unregistered_query = request.query_ids - registered_ids
         if unregistered_query:
             return LabelAccessPolicy._deny(
                 request,
-                f"미등록 query sample_id: {request.split_name} -> {sorted(unregistered_query)}",
+                f"미등록 query sample_id: {sorted(unregistered_query)}",
             )
 
         if request.execution_mode == ExecutionMode.INFER.value:
@@ -228,18 +223,19 @@ def resolve_labels(
 
     if request.execution_mode == ExecutionMode.EVALUATE.value:
         grant = request.evaluation_grant
-        if seal_guard is None or verification_record is None:
-            raise LabelAccessError("EVALUATE SealGuard와 verification_record가 필요합니다.")
+        if not isinstance(seal_guard, SealGuard):
+            raise LabelAccessError("EVALUATE 실제 SealGuard가 필요합니다.")
+        if not isinstance(verification_record, VerificationRecord):
+            raise LabelAccessError("EVALUATE VerificationRecord가 필요합니다.")
         try:
-            result = seal_guard.assert_access(
+            SealGuard.assert_access(
+                seal_guard,
                 phase=grant.phase,
                 execution_mode=request.execution_mode,
                 split_name=request.split_name,
                 evaluation_grant=grant,
                 verification_record=verification_record,
             )
-            if result is False:
-                raise LabelAccessError("EVALUATE SealGuard 접근 거부")
         except Exception as exc:
             raise LabelAccessError("EVALUATE SealGuard 검증 실패") from exc
 

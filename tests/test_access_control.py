@@ -217,14 +217,23 @@ def test_policy_rejects_cross_split_duplicate_registration():
         _policy({"support_pool": {"shared"}, "dev_stream": {"shared"}})
 
 
-def test_cross_split_query_is_rejected():
+def test_cross_split_query_without_requested_overlap_is_allowed():
     decision = _policy().decide(
         _request(
-            protocol="CONTINUAL",
-            split_name="dev_stream",
-            sample_ids=("dev-1",),
-            approved_stream_ids=frozenset({"dev-1"}),
-            query_ids=frozenset({"support-1"}),
+            episode_id="episode-1",
+            current_episode_support_ids=frozenset({"support-1"}),
+            query_ids=frozenset({"official-1"}),
+        )
+    )
+    assert decision.allowed is True
+
+
+def test_unregistered_query_fails_closed():
+    decision = _policy().decide(
+        _request(
+            episode_id="episode-1",
+            current_episode_support_ids=frozenset({"support-1"}),
+            query_ids=frozenset({"missing-query"}),
         )
     )
     assert decision.allowed is False
@@ -267,19 +276,6 @@ class SpyVault(GroundTruthVault):
     def _read_labels(self, sample_ids):
         self.read_calls += 1
         return super()._read_labels(sample_ids)
-
-
-class FakeSealGuard:
-    def __init__(self, *, result=None, error=None):
-        self.result = result
-        self.error = error
-        self.calls = []
-
-    def assert_access(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.error is not None:
-            raise self.error
-        return self.result
 
 
 def _grant(phase=6, approved_splits=("official_test",)):
@@ -367,33 +363,70 @@ def test_resolve_labels_does_not_read_vault_when_adapt_is_denied():
     assert vault.read_calls == 0
 
 
-def test_evaluate_requires_seal_guard_and_record_before_vault_read():
+def test_evaluate_requires_real_seal_guard_and_record_before_vault_read(tmp_path):
     vault = _spy_vault()
     request = _evaluate_request()
+    guard, record, _ = _real_seal_context(tmp_path)
+
+    class NoopSealGuard:
+        def assert_access(self, **kwargs):
+            return None
+
     with pytest.raises(LabelAccessError):
         resolve_labels(request, vault, _policy())
+    with pytest.raises(LabelAccessError):
+        resolve_labels(request, vault, _policy(), seal_guard=guard)
     with pytest.raises(LabelAccessError):
         resolve_labels(
             request,
             vault,
             _policy(),
-            seal_guard=FakeSealGuard(),
+            seal_guard=NoopSealGuard(),
+            verification_record=record,
+        )
+    with pytest.raises(LabelAccessError):
+        resolve_labels(
+            request,
+            vault,
+            _policy(),
+            seal_guard=guard,
+            verification_record=object(),
         )
     assert vault.read_calls == 0
 
 
-def test_evaluate_calls_seal_guard_before_reading_vault():
+def test_evaluate_rejects_seal_guard_subclass_override_bypass(tmp_path):
+    guard, record, _ = _real_seal_context(tmp_path)
+
+    class NoopSealGuard(SealGuard):
+        def assert_access(self, **kwargs):
+            return None
+
     vault = _spy_vault()
-    guard = FakeSealGuard()
-    record = object()
+    with pytest.raises(LabelAccessError, match="SealGuard"):
+        resolve_labels(
+            _evaluate_request(),
+            vault,
+            _policy(),
+            seal_guard=NoopSealGuard({}),
+            verification_record=record,
+        )
+    assert vault.read_calls == 0
+
+
+def test_evaluate_calls_seal_guard_before_reading_vault(tmp_path, monkeypatch):
+    vault = _spy_vault()
+    guard, record, _ = _real_seal_context(tmp_path)
     request = _evaluate_request()
-    original_assert_access = guard.assert_access
+    original_assert_access = SealGuard.assert_access
+    calls = []
 
-    def assert_access_before_vault_read(**kwargs):
+    def assert_access_before_vault_read(self, **kwargs):
         assert vault.read_calls == 0
-        return original_assert_access(**kwargs)
+        calls.append(kwargs)
+        return original_assert_access(self, **kwargs)
 
-    guard.assert_access = assert_access_before_vault_read
+    monkeypatch.setattr(SealGuard, "assert_access", assert_access_before_vault_read)
 
     labels = resolve_labels(
         request,
@@ -404,7 +437,7 @@ def test_evaluate_calls_seal_guard_before_reading_vault():
     )
     assert labels == {"official-1": "8"}
     assert vault.read_calls == 1
-    assert guard.calls == [
+    assert calls == [
         {
             "phase": 6,
             "execution_mode": "EVALUATE",
@@ -415,29 +448,40 @@ def test_evaluate_calls_seal_guard_before_reading_vault():
     ]
 
 
-def test_evaluate_seal_failure_does_not_read_vault():
+def test_evaluate_seal_failure_does_not_read_vault(tmp_path, monkeypatch):
+    guard, record, _ = _real_seal_context(tmp_path)
+
+    def fail_assert_access(self, **kwargs):
+        raise RuntimeError("seal failed")
+
+    monkeypatch.setattr(SealGuard, "assert_access", fail_assert_access)
     vault = _spy_vault()
-    guard = FakeSealGuard(error=RuntimeError("seal failed"))
     with pytest.raises(LabelAccessError, match="SealGuard"):
         resolve_labels(
             _evaluate_request(),
             vault,
             _policy(),
             seal_guard=guard,
-            verification_record=object(),
+            verification_record=record,
         )
     assert vault.read_calls == 0
 
 
-def test_evaluate_false_seal_result_does_not_read_vault():
+def test_evaluate_rejects_mismatched_record_before_vault_read(tmp_path):
+    guard, record, _ = _real_seal_context(tmp_path)
+    grant = EvaluationGrant(
+        evaluation_id="evaluation-2",
+        phase=6,
+        approved_splits=frozenset({"official_test"}),
+    )
     vault = _spy_vault()
     with pytest.raises(LabelAccessError, match="SealGuard"):
         resolve_labels(
-            _evaluate_request(),
+            _evaluate_request(grant=grant),
             vault,
             _policy(),
-            seal_guard=FakeSealGuard(result=False),
-            verification_record=object(),
+            seal_guard=guard,
+            verification_record=record,
         )
     assert vault.read_calls == 0
 
