@@ -122,6 +122,35 @@ dev (구현) → verify (검증/수정) → main (최종 통합)
 - `core/contracts.py`: v1.9.3 부록 1 6대 인터페이스(Observation/Action/Structure/Hypothesis/Prediction/Memory) — 불변 변환(`MappingProxyType`/`tuple`/read-only ndarray), `ImmutableTensor`(`.detach().clone()` 방어 복사 + SHA-256 스냅샷 변경 탐지), JSON 왕복 직렬화.
 - 검증: `pytest tests/ -q`(19 passed). 결정론 플래그: cudnn.deterministic=True, cudnn.benchmark=False, tf32_matmul=False, tf32_cudnn=False, precision=highest, CUBLAS=:4096:8.
 
+## T3 결함 수정 완료 노트 (`9fb9a91`, 미커밋)
+
+- 기준 커밋: `9fb9a91` (`verify`, 결함 수정 직전 HEAD).
+- 수정 결함:
+  - P1: resolver의 policy 오버라이드 guard 우회 차단.
+  - P2: 등록 시 전역 `sample_id` 중복 거부 및 교차 split query 거부.
+  - P3: `split_manifest_v1.json` 내 라벨·기밀 필드 주입 검증 추가.
+  - P4: 중첩 `MappingProxyType`/tuple 메타데이터 Canonical JSON 정규화.
+  - P5: pHash 근접 후보 검색을 Hamming 거리 BK-tree로 전환해 버킷 누락 제거.
+  - P6: 실제 MNIST 공개 엔트리 70,000개의 `split_name`을 상위 manifest와 일치시켜 재생성.
+  - P7: MNIST `writer_id`를 `None`으로 미확인 표기하고, OOD 8쌍에서는 writer 미확인 시 fail-closed 처리.
+- 생성/수정 파일:
+  - `src/foveacore/__main__.py`
+  - `src/foveacore/data/access_control.py`
+  - `src/foveacore/data/ood_validator.py`
+  - `src/foveacore/data/seal_guard.py`
+  - `src/foveacore/data/splits.py`
+  - `src/foveacore/data/validation_metadata.py`
+  - `tests/test_access_control.py`, `tests/test_data_validation_cli.py`, `tests/test_seal_guard.py`, `tests/test_split_isolation.py`, `tests/test_splits.py`
+  - `data/split_{support_pool,dev_stream,main_stream,official_test,reserved_sealed}.json`
+- 검증 명령 & 실제 결과:
+  - `.venv/bin/python -m pytest -q` → **406 passed** (589.16초, exit 0).
+  - `.venv/bin/python -m foveacore validate --config configs/phase0.yaml --data-dir data` → `validate PASS`, exit 0.
+  - `.venv/bin/python -m foveacore build-splits --out data` → 70,000 엔트리 재생성, exit 0.
+  - BK-tree 무작위 30세트·threshold 0/1/3/10 brute-force 대조 → PASS.
+  - `git diff --check` → PASS.
+- 독립 감사: `auditor` 3개 단위 요청했으나 공급자 무료 사용량 한도·동시 요청 600 초과·모델 unavailable로 미실행. 메인 모델 fallback 자체 검증만 완료.
+- 커밋·푸시: 하지 않음.
+
 ## 보류 사항
 
 - T4 — 정책 결합 검증, ReadOnlyInferenceGuard, 스냅샷 복원, 미래 차단 커서, 에피소드 샘플러 (T4 미착수).

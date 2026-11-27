@@ -78,6 +78,7 @@ class LabelAccessPolicy:
         if not isinstance(registered_splits, Mapping):
             raise LabelAccessError("registered_splits는 mapping이어야 합니다.")
         normalized: Dict[str, frozenset[str]] = {}
+        id_to_split: Dict[str, str] = {}
         for split_name, sample_ids in registered_splits.items():
             if split_name not in SPLIT_NAMES:
                 raise LabelAccessError(f"알 수 없는 등록 split: {split_name}")
@@ -89,8 +90,17 @@ class LabelAccessPolicy:
                 raise LabelAccessError(f"{split_name} sample_ids를 집합으로 변환할 수 없습니다.") from exc
             if any(not isinstance(value, str) or not value.strip() for value in ids):
                 raise LabelAccessError(f"{split_name}에 유효하지 않은 sample_id가 있습니다.")
+            for sample_id in ids:
+                previous_split = id_to_split.get(sample_id)
+                if previous_split is not None:
+                    raise LabelAccessError(
+                        f"sample_id 중복 등록: {sample_id} -> "
+                        f"{previous_split}, {split_name}"
+                    )
+                id_to_split[sample_id] = split_name
             normalized[split_name] = ids
         self._registered_splits = normalized
+        self._id_to_split = id_to_split
 
     @staticmethod
     def _deny(request: LabelAccessRequest, reason: str) -> AccessDecision:
@@ -104,47 +114,59 @@ class LabelAccessPolicy:
         if not isinstance(request, LabelAccessRequest):
             return AccessDecision(allowed=False, reason="잘못된 LabelAccessRequest")
         if not request.sample_ids:
-            return self._deny(request, "빈 sample_ids 요청")
+            return LabelAccessPolicy._deny(request, "빈 sample_ids 요청")
 
         registered_ids = self._registered_splits.get(request.split_name)
         if registered_ids is None:
-            return self._deny(request, f"미등록 split: {request.split_name}")
+            return LabelAccessPolicy._deny(request, f"미등록 split: {request.split_name}")
         unregistered = request.sample_ids - registered_ids
         if unregistered:
-            return self._deny(
+            return LabelAccessPolicy._deny(
                 request,
                 f"미등록 sample_id: {request.split_name} -> {sorted(unregistered)}",
             )
+        cross_split_query = {
+            sample_id
+            for sample_id in request.query_ids
+            if self._id_to_split.get(sample_id) not in (None, request.split_name)
+        }
+        if cross_split_query:
+            return LabelAccessPolicy._deny(
+                request,
+                f"다른 split query sample_id: {sorted(cross_split_query)}",
+            )
         unregistered_query = request.query_ids - registered_ids
         if unregistered_query:
-            return self._deny(
+            return LabelAccessPolicy._deny(
                 request,
                 f"미등록 query sample_id: {request.split_name} -> {sorted(unregistered_query)}",
             )
 
         if request.execution_mode == ExecutionMode.INFER.value:
-            return self._deny(request, "INFER 라벨 접근은 전면 차단")
+            return LabelAccessPolicy._deny(request, "INFER 라벨 접근은 전면 차단")
         query_overlap = request.sample_ids & request.query_ids
         if query_overlap:
-            return self._deny(
+            return LabelAccessPolicy._deny(
                 request,
                 f"미확정 query 접근 차단: {sorted(query_overlap)}",
             )
 
         if request.execution_mode == ExecutionMode.EVALUATE.value:
-            return self._decide_evaluate(request)
+            return LabelAccessPolicy._decide_evaluate(self, request)
         if request.execution_mode == ExecutionMode.ADAPT.value:
-            return self._decide_adapt(request)
-        return self._deny(request, f"지원하지 않는 execution_mode: {request.execution_mode}")
+            return LabelAccessPolicy._decide_adapt(self, request)
+        return LabelAccessPolicy._deny(
+            request, f"지원하지 않는 execution_mode: {request.execution_mode}"
+        )
 
     def _decide_evaluate(self, request: LabelAccessRequest) -> AccessDecision:
         grant = request.evaluation_grant
         if grant is None:
-            return self._deny(request, "EVALUATE evaluation_grant 필요")
+            return LabelAccessPolicy._deny(request, "EVALUATE evaluation_grant 필요")
         if grant.phase not in (6, 7):
-            return self._deny(request, f"EVALUATE 허용 phase 아님: {grant.phase}")
+            return LabelAccessPolicy._deny(request, f"EVALUATE 허용 phase 아님: {grant.phase}")
         if request.split_name not in grant.approved_splits:
-            return self._deny(request, f"평가 미승인 split: {request.split_name}")
+            return LabelAccessPolicy._deny(request, f"평가 미승인 split: {request.split_name}")
         return AccessDecision(
             allowed=True,
             reason="EVALUATE 승인; SealGuard 검증 필요",
@@ -160,7 +182,7 @@ class LabelAccessPolicy:
         unknown_support = request.current_episode_support_ids - support_ids
         unknown_stream = request.approved_stream_ids - stream_ids
         if unknown_support or unknown_stream:
-            return self._deny(
+            return LabelAccessPolicy._deny(
                 request,
                 "ADAPT 승인 컨텍스트에 미등록 sample_id: "
                 f"support={sorted(unknown_support)}, stream={sorted(unknown_stream)}",
@@ -175,7 +197,7 @@ class LabelAccessPolicy:
             sample_ids=request.sample_ids,
             protocol=request.protocol,
         ):
-            return self._deny(
+            return LabelAccessPolicy._deny(
                 request,
                 f"ADAPT 승인 범위 밖: split={request.split_name}, protocol={request.protocol}",
             )
@@ -200,7 +222,7 @@ def resolve_labels(
     if not isinstance(policy, LabelAccessPolicy):
         raise LabelAccessError("policy는 LabelAccessPolicy여야 합니다.")
 
-    decision = policy.decide(request)
+    decision = LabelAccessPolicy.decide(policy, request)
     if not decision.allowed:
         raise LabelAccessError(decision.reason)
 

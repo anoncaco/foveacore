@@ -68,6 +68,38 @@ def test_each_ood_pair_rejects_each_metadata_axis(a, b, field):
     )
 
 
+def test_ood_pair_with_unknown_writer_fails_closed():
+    manifests = {
+        "dev_ood": _manifest("dev_ood", ["a1"]),
+        "test_ood": _manifest("test_ood", ["b1"]),
+    }
+    records = [
+        ValidationMetadata(
+            split_name="dev_ood",
+            sample_id="a1",
+            class_id="class-a",
+            writer_id=None,
+            alphabet_id=None,
+            source_id="source-a",
+        ),
+        ValidationMetadata(
+            split_name="test_ood",
+            sample_id="b1",
+            class_id="class-b",
+            writer_id=None,
+            alphabet_id=None,
+            source_id="source-b",
+        ),
+    ]
+
+    errors = OODValidator(
+        manifests, ValidationMetadataStore.from_records(records)
+    ).validate_disjoint()
+
+    assert any("dev_ood.writer_id" in error for error in errors)
+    assert any("test_ood.writer_id" in error for error in errors)
+
+
 def test_class_overlap_fails_even_when_ids_images_writers_sources_differ():
     a, b = "dev_ood", "test_ood"
     manifests = {a: _manifest(a, ["a1"]), b: _manifest(b, ["b1"])}
@@ -104,6 +136,27 @@ def test_p2_splits_do_not_require_pairwise_class_isolation():
         ]
     )
     assert OODValidator(manifests, store).validate_disjoint() == []
+
+
+def test_phash_candidates_cross_prefix_buckets_within_hamming_threshold():
+    manifests = {
+        "dev_ood": _manifest("dev_ood", ["a1"]),
+        "test_ood": _manifest("test_ood", ["b1"]),
+    }
+    manifests["dev_ood"]["entries"][0]["phash"] = "0000000000000000"
+    manifests["test_ood"]["entries"][0]["phash"] = "0001000000000000"
+
+    candidates = OODValidator(manifests).find_phash_candidates(threshold=1)
+
+    assert candidates == [
+        {
+            "split_a": "dev_ood",
+            "id_a": "a1",
+            "split_b": "test_ood",
+            "id_b": "b1",
+            "distance": 1,
+        }
+    ]
 
 
 def test_empty_ood_slots_need_no_metadata():

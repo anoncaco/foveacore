@@ -12,7 +12,7 @@ from foveacore.data.access_control import (
     resolve_labels,
 )
 from foveacore.data.ground_truth_vault import GroundTruthVault
-from foveacore.data.schema import EvaluationGrant, LabelAccessRequest
+from foveacore.data.schema import AccessDecision, EvaluationGrant, LabelAccessRequest
 from foveacore.data.seal_guard import (
     IndependentBaseline,
     SealGuard,
@@ -212,6 +212,24 @@ def test_unregistered_split_and_sample_fail_closed():
     assert unregistered_sample.allowed is False
 
 
+def test_policy_rejects_cross_split_duplicate_registration():
+    with pytest.raises(LabelAccessError, match="중복"):
+        _policy({"support_pool": {"shared"}, "dev_stream": {"shared"}})
+
+
+def test_cross_split_query_is_rejected():
+    decision = _policy().decide(
+        _request(
+            protocol="CONTINUAL",
+            split_name="dev_stream",
+            sample_ids=("dev-1",),
+            approved_stream_ids=frozenset({"dev-1"}),
+            query_ids=frozenset({"support-1"}),
+        )
+    )
+    assert decision.allowed is False
+
+
 def test_unregistered_adapt_context_fails_closed():
     policy = _policy()
     unknown_support = policy.decide(
@@ -315,6 +333,21 @@ def test_evaluate_requires_phase_and_approved_split():
     assert wrong_phase.allowed is False
     assert unapproved.allowed is False
     assert allowed.allowed is True
+
+
+def test_resolve_labels_rejects_policy_subclass_guard_bypass():
+    class AllowAllPolicy(LabelAccessPolicy):
+        def decide(self, request):
+            return AccessDecision(
+                allowed=True,
+                reason="bypass",
+                allowed_sample_ids=request.sample_ids,
+            )
+
+    vault = _spy_vault()
+    with pytest.raises(LabelAccessError):
+        resolve_labels(_request(execution_mode="INFER"), vault, AllowAllPolicy(REGISTERED_SPLITS))
+    assert vault.read_calls == 0
 
 
 def test_resolve_labels_reads_vault_only_after_adapt_approval():

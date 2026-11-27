@@ -15,6 +15,7 @@ from foveacore.data.splits import (
     validate_split_ids_disjoint,
     validate_split_manifest,
 )
+from foveacore.data.validation_metadata import ValidationMetadataStore
 
 
 def test_build_split_manifest_required_fields():
@@ -199,6 +200,12 @@ def test_build_all_mnist_splits_with_synthetic_raw_writes_all_outputs(tmp_path, 
     assert (out / "ground_truth_vault.json").exists()
     assert (out / "validation_metadata.json").exists()
     assert (out / "phash_candidates.json").exists()
+    metadata = ValidationMetadataStore.load(out / "validation_metadata.json")
+    assert all(
+        record.writer_id is None
+        for split_name in SPLIT_NAMES
+        for record in metadata.values_for_split(split_name)
+    )
 
 
 def test_build_all_mnist_splits_validates_global_ids_before_saving(tmp_path, monkeypatch):

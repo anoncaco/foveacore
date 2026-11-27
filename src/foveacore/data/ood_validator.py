@@ -103,13 +103,35 @@ class OODValidator:
             raise ValueError("검증 메타데이터 저장소가 필요합니다.")
         errors: List[str] = []
         for field in ("class_id", "writer_id", "source_id"):
+            records_a = [
+                self._metadata_store.get(a, sid) for sid in self._sample_ids(a)
+            ]
+            records_b = [
+                self._metadata_store.get(b, sid) for sid in self._sample_ids(b)
+            ]
+            missing_a = sorted(
+                record.sample_id
+                for record in records_a
+                if getattr(record, field) is None
+            )
+            missing_b = sorted(
+                record.sample_id
+                for record in records_b
+                if getattr(record, field) is None
+            )
+            if missing_a:
+                errors.append(f"검증 메타데이터 누락: {a}.{field} -> {missing_a}")
+            if missing_b:
+                errors.append(f"검증 메타데이터 누락: {b}.{field} -> {missing_b}")
             values_a = {
-                getattr(self._metadata_store.get(a, sid), field)
-                for sid in self._sample_ids(a)
+                getattr(record, field)
+                for record in records_a
+                if getattr(record, field) is not None
             }
             values_b = {
-                getattr(self._metadata_store.get(b, sid), field)
-                for sid in self._sample_ids(b)
+                getattr(record, field)
+                for record in records_b
+                if getattr(record, field) is not None
             }
             overlap = values_a & values_b
             if overlap:
@@ -151,38 +173,73 @@ class OODValidator:
         return bin(va ^ vb).count("1")
 
     def find_phash_candidates(self, threshold: int = 10) -> List[Dict[str, Any]]:
-        """pHash 근접 중복 후보 검출(버킷 기반)."""
-        candidates: List[Dict[str, Any]] = []
+        """BK-tree로 Hamming 거리 기준의 교차 split 근접 중복 후보를 검출합니다."""
+        if threshold < 0:
+            return []
+
         items = []
         for split_name, manifest in self._manifests.items():
             for entry in manifest.get("entries", []):
-                if entry.get("phash"):
-                    items.append((split_name, entry.get("sample_id"), entry["phash"]))
+                phash = entry.get("phash")
+                if not phash:
+                    continue
+                try:
+                    value = int(phash, 16)
+                except (TypeError, ValueError):
+                    continue
+                if value < 0:
+                    continue
+                items.append((split_name, entry.get("sample_id"), value))
 
-        buckets: Dict[str, List[int]] = {}
-        for idx, (_, _, ph) in enumerate(items):
-            key = ph[:4] if len(ph) >= 4 else ph
-            buckets.setdefault(key, []).append(idx)
-
+        candidates: List[Dict[str, Any]] = []
         seen = set()
-        for idxs in buckets.values():
-            for a in range(len(idxs)):
-                for b in range(a + 1, len(idxs)):
-                    i, j = idxs[a], idxs[b]
-                    if (i, j) in seen or (j, i) in seen:
-                        continue
-                    seen.add((i, j))
-                    distance = self._phash_distance(items[i][2], items[j][2])
-                    if distance <= threshold and items[i][0] != items[j][0]:
+        root = None
+        for idx, (split_name, _sample_id, value) in enumerate(items):
+            if root is None:
+                root = [value, [idx], {}]
+                continue
+
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                distance = (node[0] ^ value).bit_count()
+                if distance <= threshold:
+                    for other_idx in node[1]:
+                        if items[other_idx][0] == split_name:
+                            continue
+                        pair = (min(idx, other_idx), max(idx, other_idx))
+                        if pair in seen:
+                            continue
+                        seen.add(pair)
+                        i, j = pair
                         candidates.append(
                             {
                                 "split_a": items[i][0],
                                 "id_a": items[i][1],
                                 "split_b": items[j][0],
                                 "id_b": items[j][1],
-                                "distance": distance,
+                                "distance": (items[i][2] ^ items[j][2]).bit_count(),
                             }
                         )
+
+                lower = distance - threshold
+                upper = distance + threshold
+                for edge, child in node[2].items():
+                    if lower <= edge <= upper:
+                        stack.append(child)
+
+            node = root
+            while True:
+                distance = (node[0] ^ value).bit_count()
+                if distance == 0:
+                    node[1].append(idx)
+                    break
+                child = node[2].get(distance)
+                if child is None:
+                    node[2][distance] = [value, [idx], {}]
+                    break
+                node = child
+
         return candidates
 
     @staticmethod

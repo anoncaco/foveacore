@@ -123,6 +123,30 @@ def validate_split_manifest(manifest: Dict[str, Any]) -> List[str]:
     return []
 
 
+def validate_combined_split_manifest(manifest: Dict[str, Any]) -> List[str]:
+    """공개 combined manifest와 내부 10개 split 스키마를 검증합니다."""
+    if not isinstance(manifest, dict):
+        return ["combined split manifest는 dict여야 합니다."]
+
+    errors: List[str] = []
+    expected_fields = {"schema_version", "splits"}
+    missing_fields = expected_fields.difference(manifest)
+    extra_fields = set(manifest).difference(expected_fields)
+    if missing_fields:
+        errors.append(f"combined manifest 필수 필드 누락: {sorted(missing_fields)}")
+    if extra_fields:
+        errors.append(f"combined manifest 허용하지 않는 필드: {sorted(extra_fields)}")
+    if manifest.get("schema_version") != SCHEMA_VERSION:
+        errors.append("combined manifest schema_version 불일치")
+
+    splits = manifest.get("splits")
+    if not isinstance(splits, dict):
+        errors.append("combined manifest splits는 dict여야 합니다.")
+    else:
+        errors.extend(register_manifest(splits))
+    return errors
+
+
 def register_manifest(
     manifests: Dict[str, Dict[str, Any]],
     *,
@@ -243,7 +267,7 @@ def build_all_mnist_splits(
                     "split_name": split_name,
                     "sample_id": sid,
                     "class_id": str(int(label_arr[i])),
-                    "writer_id": f"{prefix}-writer",
+                    "writer_id": None,
                     "alphabet_id": "digits",
                     "source_id": "mnist",
                 }

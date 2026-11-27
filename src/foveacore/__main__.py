@@ -21,6 +21,7 @@ from foveacore.data.splits import (
     build_all_mnist_splits,
     load_split_manifest,
     register_manifest,
+    validate_combined_split_manifest,
     validate_split_ids_disjoint,
     validate_split_manifest,
 )
@@ -59,6 +60,13 @@ def _validate_data_integrity(out_dir: Path) -> tuple[list[str], list[str]]:
         errors.append(f"정답 저장소 누락: {vault_path}")
 
     errors.extend(register_manifest(manifests))
+    combined_path = out_dir / "split_manifest_v1.json"
+    if combined_path.exists():
+        try:
+            combined = json.loads(combined_path.read_text(encoding="utf-8"))
+            errors.extend(validate_combined_split_manifest(combined))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            errors.append(f"결합 분할 매니페스트 파싱 실패({combined_path}): {exc}")
     errors.extend(validate_sealed_policy(manifests))
     errors.extend(validate_split_ids_disjoint(manifests))
     metadata_path = out_dir / "validation_metadata.json"
