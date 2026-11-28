@@ -1,6 +1,6 @@
 # STATE.md
 
-- **현재 단계:** Phase 0 (T3 완료)
+- **현재 단계:** Phase 0 (C-Gate PASS)
 - **기준 문서:** FoveaCore 연구·구현 계획서 v1.9.3
 - **Phase 0 문서:** [`docs/phase0/README.md`](docs/phase0/README.md)
 - **버전:** 0.1.0
@@ -158,6 +158,27 @@ dev (구현) → verify (검증/수정) → main (최종 통합)
 - 생성/수정 파일: `src/foveacore/data/access_control.py`, `tests/test_access_control.py`, `STATE.md`.
 - 검증: `.venv/bin/python -m pytest -q` → **408 passed** (596.38초, exit 0), `git diff --check` → PASS.
 - 독립 감사는 재실행하지 않았고, 해당 후속 수정은 미커밋 상태.
+
+## Phase 0 공통 Gate 검증 (2026-11-29)
+
+- **검증 대상:** verify `2f07e0976f762d65310a409aa0580b0917a59880`
+- **기준 working_rules.md SHA-256:** `c32f631d7dc8ee92f7ff21ca8e28b9944eff09b8964e598dadc6b8a9307e1561`
+- **대조 범위:** 문서·Git 이력·산출물 존재 여부 대조
+- **종합 판정:** **C-Gate PASS**
+
+| 게이트 | 항목 | 결과 |
+|---|---|---|
+| C-01 | Phase0/REQ-P0-01~10/v1.9.3/target 확인 | PASS |
+| C-02 | Index 25종 O/X 완료·필수 문서 존재·X 문서 부재 | PASS |
+| C-03 | origin/verify..verify 변경이 .gitignore와 docs/phase0에만 존재 | PASS |
+| C-04 | R3 변경 이력에 수용 기준 변경 없음·사용자 지시에 따른 재구성 | PASS |
+| C-05 | 진행을 막는 미확정 사항 없음·auditor 미완료는 별도 검증 한계 | PASS |
+| C-06 | 대상 커밋과 로컬 파일 해시 식별·별도 검증 환경 미사용 | PASS |
+| C-07 | 커밋·머지·푸시가 사용자 지시에 따른 것과 실제 해시 확인 | PASS |
+
+- **한계:** 독립 auditor 감사 미완료.
+- **관찰 사항:** R3의 REQ-P0-07~10 상태가 설계 전으로 남아 실제와 불일치.
+- **기록 전 Git 상태:** verify, tracked clean.
 
 ## 보류 사항
 
