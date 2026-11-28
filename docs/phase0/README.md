@@ -1,19 +1,57 @@
 # Phase 0 문서
 
-Phase 0의 기준 계획과 Task별 확정 설계·검증 문서를 모아둡니다.
+Phase 0은 **실험 환경, 데이터 격리, 재현성, 접근제어, 봉인, 초경량 기준선**을 준비하는 단계다. 문서는 기존 작업 단위가 아니라 `00_phase0_deliverables_index.md`와 `R3.md`의 `REQ-P0-*`를 기준으로 관리한다.
+
+## 현재 상태
+
+| 요구사항 범위 | 상태 | 의미 |
+| :--- | :--- | :--- |
+| `REQ-P0-01` ~ `REQ-P0-06` | `소급 PASS` | 기존 구현과 실행 증거를 바탕으로 문서화 완료. 독립 auditor 감사는 미완료 |
+| `REQ-P0-07` ~ `REQ-P0-10` | `설계 완료, 구현 전` | 클래스·인터페이스·시험 명세는 확정됐지만 코드와 실행 결과는 아직 없음 |
+
+## 문서 구조
 
 | 문서 | 역할 |
-|---|---|
-| [`phase0_detail_plan.md`](phase0_detail_plan.md) | Phase 0 전체 원칙·결정 잠금·T0~T5 요구사항과 완료 기준 |
-| [`t0_project_foundation.md`](t0_project_foundation.md) | 패키지·src 레이아웃·의존성 잠금·추적 규칙 |
-| [`t1_configuration_cli_and_profiles.md`](t1_configuration_cli_and_profiles.md) | 설정 검증·CLI·센서 프로파일·금지 패키지·Git provenance |
-| [`t2_determinism_provenance_and_contracts.md`](t2_determinism_provenance_and_contracts.md) | 5종 시드·GPU 결정론·provenance·6대 공통 계약 |
-| [`t3_data_splits_and_seal_guard.md`](t3_data_splits_and_seal_guard.md) | T3 재작성 설계·분할 격리·접근제어·동결 해시·수용 테스트 |
+| :--- | :--- |
+| [`00_phase0_deliverables_index.md`](00_phase0_deliverables_index.md) | CBD 산출물 `O/X` 결정과 생성·통합 규칙 |
+| [`R3.md`](R3.md) | `REQ-P0-*` 원문 출처, 수용 기준, 설계·시험·구현·결과 추적표 |
+| [`D1.md`](D1.md) | 클래스·데이터 모델·오류 계약·외부 라이브러리 통합 경계 |
+| [`D4.md`](D4.md) | CLI·실행 모드·manifest·산출물 입출력 계약 |
+| [`D5.md`](D5.md) | 패키지 구조·3단 데이터 분리·Phase 경계·금지 의존성 |
+| [`D7.md`](D7.md) | 시스템시험·실패 복구·Phase 1 진입 게이트 |
+| [`D10.md`](D10.md) | CLI·분할 생성·smoke 통합시험 시나리오 |
+| [`D11.md`](D11.md) | 요구사항별 단위시험 입력·기대결과·수용 기준 |
+| [`I2.md`](I2.md) | 단위시험 실행 결과 |
+| [`T1.md`](T1.md) | 통합시험 실행 결과 |
+| [`T2.md`](T2.md) | 시스템시험 실행 결과 |
+| [`T7.md`](T7.md) | Phase 1 진입 게이트 최종 판정 |
+| [`STATE.md`](../../STATE.md) | 전체 진행 상태·실행 명령·검증 증거 |
 
-문서의 해석 우선순위는 다음과 같습니다.
+- `R1.md`는 만들지 않는다. 상위 요구사항 기준서는 [`foveal_active_vision_1shot_research_plan_v1.9.3.md`](../../foveal_active_vision_1shot_research_plan_v1.9.3.md)를 직접 참조한다.
+- `D12.md`는 만들지 않는다. MNIST 분할·초기데이터 설계는 `D4.md`/`D5.md`에 통합한다.
+- `I1.md`는 만들지 않는다. 프로그램 코드 위치와 역할은 `D5.md`에 기록한다.
+- `T1.md`·`T2.md`·`T7.md`는 CBD 결과서 코드이며 기존 작업 단위를 뜻하지 않는다.
 
-1. `phase0_detail_plan.md`와 상위 연구 계획서의 요구사항
-2. Task별 설계 문서에 명시된 수용 기준
-3. 코드와 테스트에서 확인되는 실제 구현 동작
+## 진행 방식
 
-요구사항과 구현이 달라진 경우에는 임의로 명세를 바꾸지 않고, 해당 Task 문서와 테스트를 함께 검토·갱신합니다.
+1. **요구사항 추출:** `R3.md`에 원문 출처와 수용 기준을 고정한다.
+2. **설계·시험 명세:** `O`로 지정된 `D*` 문서에 클래스·인터페이스·오류·입출력·시험 케이스를 구현 전에 작성한다.
+3. **구현·테스트:** `REQ-P0-*` 단위로 코드와 `pytest`를 구현하고 실제 CLI를 실행한다.
+4. **결과 기록:** 실행 명령·종료 코드·테스트 수·로그 경로를 `I2`·`T1`·`T2`·`T7`·`STATE.md`에 기록한다.
+
+`v1.9.3` 전체는 매번 읽지 않는다. Phase 시작 시 필요한 구간을 추출하고, 이후에는 수식·계약·오픈소스 조항 확인이 필요할 때만 해당 구간을 선택 참조한다.
+
+## 검증 명령
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m foveacore validate --config configs/phase0.yaml
+.venv/bin/python -m foveacore validate --config configs/phase0.yaml --data-dir data
+```
+
+## 변경 관리
+
+- 구현 난이도만으로 요구사항이나 수용 기준을 바꾸지 않는다.
+- 기술적 한계·오류·충돌이 확인되면 근거, 대안, 영향도를 먼저 보고하고 승인받는다.
+- 승인된 변경은 `R3.md`와 관련 `D*` 문서에 반영하고 변경 이력을 남긴다.
+- 커밋·푸시는 별도 지시 없이는 하지 않는다.
